@@ -36,6 +36,23 @@ final class WordPressAdapter extends AbstractPdoAdapter
         return $this->tableExists('posts');
     }
 
+    /** @return list<array{path: string, label: string, type?: 'file'|'dir'}> */
+    protected function getDetectionFileMarkers(): array
+    {
+        return [
+            ['path' => 'wp-config.php', 'label' => 'wp-config.php'],
+            ['path' => 'wp-config-sample.php', 'label' => 'wp-config-sample.php'],
+        ];
+    }
+
+    /** @return list<array{table: string, label: string}> */
+    protected function getDetectionTableMarkers(): array
+    {
+        $prefix = $this->dbPrefix ?? 'wp_';
+
+        return [['table' => 'posts', 'label' => $prefix . 'posts']];
+    }
+
     protected function connectFromCms(string $rootPath): PDO
     {
         $configPath = $rootPath . DIRECTORY_SEPARATOR . 'wp-config.php';

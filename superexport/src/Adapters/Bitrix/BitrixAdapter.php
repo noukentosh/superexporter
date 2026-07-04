@@ -30,8 +30,14 @@ final class BitrixAdapter extends AbstractPdoAdapter
 
     protected function canDetectByFiles(string $rootPath): bool
     {
-        return is_dir($rootPath . DIRECTORY_SEPARATOR . 'bitrix')
-            && is_file($rootPath . DIRECTORY_SEPARATOR . 'bitrix' . DIRECTORY_SEPARATOR . '.settings.php');
+        if (!is_dir($rootPath . DIRECTORY_SEPARATOR . 'bitrix')) {
+            return false;
+        }
+
+        $bitrix = $rootPath . DIRECTORY_SEPARATOR . 'bitrix';
+
+        return is_file($bitrix . DIRECTORY_SEPARATOR . '.settings.php')
+            || is_file($bitrix . DIRECTORY_SEPARATOR . 'php_interface' . DIRECTORY_SEPARATOR . 'dbconn.php');
     }
 
     protected function canDetectByTables(): bool
@@ -39,21 +45,91 @@ final class BitrixAdapter extends AbstractPdoAdapter
         return $this->tableExists('iblock_element');
     }
 
+    /** @return list<array{path: string, label: string, type?: 'file'|'dir'}> */
+    protected function getDetectionFileMarkers(): array
+    {
+        return [
+            ['path' => 'bitrix', 'label' => 'bitrix/', 'type' => 'dir'],
+            ['path' => 'bitrix/.settings.php', 'label' => 'bitrix/.settings.php'],
+            ['path' => 'bitrix/php_interface/dbconn.php', 'label' => 'bitrix/php_interface/dbconn.php'],
+        ];
+    }
+
+    /** @return list<array{table: string, label: string}> */
+    protected function getDetectionTableMarkers(): array
+    {
+        $prefix = $this->dbPrefix ?? 'b_';
+
+        return [['table' => 'iblock_element', 'label' => $prefix . 'iblock_element']];
+    }
+
     protected function connectFromCms(string $rootPath): PDO
     {
+        $conn = $this->loadConnectionSettings($rootPath);
+
+        return $this->createMysqlPdo(
+            (string) ($conn['host'] ?? 'localhost'),
+            (string) ($conn['database'] ?? ''),
+            (string) ($conn['login'] ?? ''),
+            (string) ($conn['password'] ?? ''),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function loadConnectionSettings(string $rootPath): array
+    {
         $settingsPath = $rootPath . DIRECTORY_SEPARATOR . 'bitrix' . DIRECTORY_SEPARATOR . '.settings.php';
-        $settings = require $settingsPath;
-        $conn = $settings['connections']['value']['default'] ?? null;
-        if (!is_array($conn)) {
-            throw new SuperExportException('Bitrix DB settings not found.');
+        if (is_file($settingsPath)) {
+            $settings = require $settingsPath;
+            $conn = $settings['connections']['value']['default'] ?? null;
+            if (is_array($conn)) {
+                return $conn;
+            }
         }
 
-        $this->dbPrefix = '';
-        $host = (string) ($conn['host'] ?? 'localhost');
-        $database = (string) ($conn['database'] ?? '');
-        $dsn = 'mysql:host=' . $host . ';dbname=' . $database . ';charset=utf8mb4';
+        $dbconnPath = $rootPath . DIRECTORY_SEPARATOR . 'bitrix'
+            . DIRECTORY_SEPARATOR . 'php_interface' . DIRECTORY_SEPARATOR . 'dbconn.php';
+        if (is_file($dbconnPath)) {
+            $conn = $this->parseDbconnFile($dbconnPath);
+            if ($conn !== null) {
+                return $conn;
+            }
+        }
 
-        return new PDO($dsn, (string) ($conn['login'] ?? ''), (string) ($conn['password'] ?? ''), [
+        throw new SuperExportException('Bitrix DB settings not found.');
+    }
+
+    /** @return array{host: string, database: string, login: string, password: string}|null */
+    private function parseDbconnFile(string $path): ?array
+    {
+        $content = (string) file_get_contents($path);
+        $vars = self::parsePhpDefines($content, ['DBHost', 'DBLogin', 'DBPassword', 'DBName']);
+
+        if ($vars === []) {
+            return null;
+        }
+
+        return [
+            'host' => $vars['DBHost'] ?? 'localhost',
+            'database' => $vars['DBName'] ?? '',
+            'login' => $vars['DBLogin'] ?? '',
+            'password' => $vars['DBPassword'] ?? '',
+        ];
+    }
+
+    private function createMysqlPdo(string $host, string $database, string $login, string $password): PDO
+    {
+        $port = null;
+        if (str_contains($host, ':')) {
+            [$host, $port] = explode(':', $host, 2);
+        }
+
+        $dsn = 'mysql:host=' . $host
+            . ($port !== null ? ';port=' . $port : '')
+            . ';dbname=' . $database
+            . ';charset=utf8mb4';
+
+        return new PDO($dsn, $login, $password, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);

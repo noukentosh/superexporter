@@ -205,18 +205,103 @@ abstract class AbstractPdoAdapter implements CmsAdapterInterface
 
     public function detect(string $rootPath): bool
     {
-        if (!$this->canDetectByFiles($rootPath)) {
-            return false;
-        }
-
-        try {
-            $this->initForRoot($rootPath);
-        } catch (\Throwable) {
-            return false;
-        }
-
-        return $this->canDetectByTables();
+        return $this->probeDetection($rootPath)['detected'];
     }
+
+    public function probeDetection(string $rootPath): array
+    {
+        $rootPath = rtrim($rootPath, '/\\');
+        $checks = [];
+
+        foreach ($this->getDetectionFileMarkers() as $marker) {
+            $checks[] = [
+                'label' => $marker['label'],
+                'passed' => $this->pathMarkerExists($rootPath, $marker),
+                'level' => 1,
+            ];
+        }
+
+        $filesOk = $this->canDetectByFiles($rootPath);
+        $checks[] = [
+            'label' => 'File markers (combined)',
+            'passed' => $filesOk,
+            'level' => 0,
+        ];
+
+        $dbOk = false;
+        $dbDetail = null;
+        if ($filesOk) {
+            try {
+                $this->resetProbeState();
+                $this->initForRoot($rootPath);
+                $dbOk = true;
+            } catch (\Throwable $e) {
+                $dbDetail = $e->getMessage();
+            }
+        }
+
+        $dbCheck = [
+            'label' => 'Database connection',
+            'passed' => $dbOk,
+            'level' => 0,
+        ];
+        if ($dbDetail !== null) {
+            $dbCheck['detail'] = $dbDetail;
+        }
+        $checks[] = $dbCheck;
+
+        $tablesOk = false;
+        if ($dbOk) {
+            foreach ($this->getDetectionTableMarkers() as $marker) {
+                $checks[] = [
+                    'label' => 'Table ' . $marker['label'],
+                    'passed' => $this->tableExists($marker['table']),
+                    'level' => 1,
+                ];
+            }
+            $tablesOk = $this->canDetectByTables();
+        }
+
+        $checks[] = [
+            'label' => 'Table signature (combined)',
+            'passed' => $tablesOk,
+            'level' => 0,
+        ];
+
+        return [
+            'detected' => $filesOk && $dbOk && $tablesOk,
+            'checks' => $checks,
+        ];
+    }
+
+    protected function resetProbeState(): void
+    {
+        $this->pdo = null;
+        $this->dbPrefix = null;
+        $this->cmsVersion = null;
+        $this->siteUrl = null;
+        $this->rootPath = '';
+    }
+
+    /**
+     * @param array{path: string, label: string, type?: 'file'|'dir'} $marker
+     */
+    protected function pathMarkerExists(string $rootPath, array $marker): bool
+    {
+        $full = $rootPath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $marker['path']);
+
+        return ($marker['type'] ?? 'file') === 'dir' ? is_dir($full) : is_file($full);
+    }
+
+    /**
+     * @return list<array{path: string, label: string, type?: 'file'|'dir'}>
+     */
+    abstract protected function getDetectionFileMarkers(): array;
+
+    /**
+     * @return list<array{table: string, label: string}>
+     */
+    abstract protected function getDetectionTableMarkers(): array;
 
     abstract protected function canDetectByFiles(string $rootPath): bool;
 

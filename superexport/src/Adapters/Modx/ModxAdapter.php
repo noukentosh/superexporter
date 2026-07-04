@@ -30,6 +30,22 @@ final class ModxAdapter extends AbstractPdoAdapter
         return $this->tableExists('site_content');
     }
 
+    /** @return list<array{path: string, label: string, type?: 'file'|'dir'}> */
+    protected function getDetectionFileMarkers(): array
+    {
+        return [
+            ['path' => 'core/config/config.inc.php', 'label' => 'core/config/config.inc.php'],
+        ];
+    }
+
+    /** @return list<array{table: string, label: string}> */
+    protected function getDetectionTableMarkers(): array
+    {
+        $prefix = $this->dbPrefix ?? 'modx_';
+
+        return [['table' => 'site_content', 'label' => $prefix . 'site_content']];
+    }
+
     protected function connectFromCms(string $rootPath): PDO
     {
         $configPath = $rootPath . DIRECTORY_SEPARATOR . 'core' . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'config.inc.php';

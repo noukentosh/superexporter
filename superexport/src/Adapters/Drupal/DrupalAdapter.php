@@ -35,6 +35,21 @@ final class DrupalAdapter extends AbstractPdoAdapter
         return $this->tableExists('node_field_data');
     }
 
+    /** @return list<array{path: string, label: string, type?: 'file'|'dir'}> */
+    protected function getDetectionFileMarkers(): array
+    {
+        return [
+            ['path' => 'sites/default/settings.php', 'label' => 'sites/default/settings.php'],
+            ['path' => 'core/lib/Drupal.php', 'label' => 'core/lib/Drupal.php'],
+        ];
+    }
+
+    /** @return list<array{table: string, label: string}> */
+    protected function getDetectionTableMarkers(): array
+    {
+        return [['table' => 'node_field_data', 'label' => 'node_field_data']];
+    }
+
     protected function connectFromCms(string $rootPath): PDO
     {
         $settingsPath = $rootPath . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'default' . DIRECTORY_SEPARATOR . 'settings.php';

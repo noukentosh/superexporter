@@ -23,6 +23,16 @@ interface CmsAdapterInterface
      */
     public function detect(string $rootPath): bool;
 
+    /**
+     * Diagnostic breakdown of detection steps (files, DB, tables).
+     *
+     * @return array{
+     *     detected: bool,
+     *     checks: list<array{label: string, passed: bool, level: int, detail?: string}>
+     * }
+     */
+    public function probeDetection(string $rootPath): array;
+
     /** CMS version string, if determinable (e.g. "6.5.2"). */
     public function getCmsVersion(): ?string;
 

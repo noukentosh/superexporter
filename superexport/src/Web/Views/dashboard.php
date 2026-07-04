@@ -3,6 +3,8 @@
 /** @var SuperExport\Web\View $view */
 /** @var array{name: string, version: string, site_url: string, db_prefix: string, entities: list<string>}|null $cms */
 /** @var string|null $cmsError */
+/** @var string $cmsRoot */
+/** @var list<array{name: string, label: string, detected: bool, selected: bool, checks: list<array{label: string, passed: bool, level: int, detail?: string}>}> $detectionScan */
 /** @var string $storagePath */
 /** @var array{exported_at: string, cms: string, stats: array<string, int>}|null $lastExport */
 
@@ -12,8 +14,40 @@ use SuperExport\Web\View;
 <h1>Dashboard</h1>
 
 <div class="card">
-  <h2 style="margin-top:0">Detected CMS</h2>
+  <h2 style="margin-top:0">CMS detection</h2>
+  <p class="muted">Root: <code><?= View::e($cmsRoot) ?></code></p>
+  <ul class="detect-list">
+    <?php foreach ($detectionScan as $item): ?>
+      <li class="<?= $item['selected'] ? 'detect-selected' : '' ?>">
+        <label class="detect-item">
+          <input type="checkbox" disabled<?= $item['detected'] ? ' checked' : '' ?>>
+          <span><?= View::e($item['label']) ?></span>
+          <?php if ($item['selected']): ?>
+            <span class="badge ok-badge">selected</span>
+          <?php elseif ($item['detected']): ?>
+            <span class="badge">matched</span>
+          <?php endif; ?>
+        </label>
+        <?php if ($item['checks'] !== []): ?>
+          <ul class="detect-sub">
+            <?php foreach ($item['checks'] as $check): ?>
+              <li class="detect-sub-<?= (int) $check['level'] ?>">
+                <label class="detect-item">
+                  <input type="checkbox" disabled<?= $check['passed'] ? ' checked' : '' ?>>
+                  <span><?= View::e($check['label']) ?></span>
+                </label>
+                <?php if (!empty($check['detail'])): ?>
+                  <div class="detect-detail"><?= View::e($check['detail']) ?></div>
+                <?php endif; ?>
+              </li>
+            <?php endforeach; ?>
+          </ul>
+        <?php endif; ?>
+      </li>
+    <?php endforeach; ?>
+  </ul>
   <?php if ($cms !== null): ?>
+    <h3>Active adapter</h3>
     <table>
       <tr><th>CMS</th><td><?= View::e($cms['name']) ?></td></tr>
       <tr><th>Version</th><td><?= View::e($cms['version']) ?></td></tr>

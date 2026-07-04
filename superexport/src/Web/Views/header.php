@@ -40,6 +40,21 @@ label.inline { display:inline-flex; gap:6px; align-items:center; font-weight:400
 pre.log { background:#0f172a; color:#d8e1ef; padding:14px 16px; border-radius:8px; max-height:420px; overflow:auto; font:13px/1.5 ui-monospace, Consolas, monospace; white-space:pre-wrap; }
 code { background:#eef1f5; padding:1px 5px; border-radius:4px; font-size:13px; }
 .badge { display:inline-block; background:#eef1f5; border-radius:999px; padding:2px 10px; font-size:13px; margin:0 4px 4px 0; }
+.badge.ok-badge { background:#dcfce7; color:var(--ok); }
+.detect-list { list-style:none; margin:12px 0 0; padding:0; }
+.detect-list li { padding:6px 0; border-bottom:1px solid var(--border); }
+.detect-list > li { padding:10px 0; }
+.detect-sub { list-style:none; margin:6px 0 0; padding:0 0 0 28px; }
+.detect-sub li { padding:3px 0; border-bottom:none; }
+.detect-sub-0 .detect-item span { font-weight:600; }
+.detect-sub-1 .detect-item span { color:var(--muted); font-size:14px; }
+.detect-detail { margin:2px 0 4px 28px; font-size:12px; color:var(--err); word-break:break-word; }
+.detect-list li:last-child { border-bottom:none; }
+.detect-list li.detect-selected { background:#f0fdf4; margin:0 -20px; padding:6px 20px; border-radius:6px; }
+.detect-item { display:flex; align-items:center; gap:10px; margin:0; font-weight:400; cursor:default; }
+.detect-item input[type=checkbox] { width:16px; height:16px; margin:0; accent-color:var(--ok); }
+.detect-item input[type=checkbox]:not(:checked) { opacity:.45; }
+h3 { font-size:15px; margin:20px 0 8px; }
 .actions { margin-top:16px; }
 input.map { max-width:260px; }
 </style>

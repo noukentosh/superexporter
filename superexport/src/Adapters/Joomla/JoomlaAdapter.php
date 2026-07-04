@@ -31,6 +31,22 @@ final class JoomlaAdapter extends AbstractPdoAdapter
         return $this->tableExists('content');
     }
 
+    /** @return list<array{path: string, label: string, type?: 'file'|'dir'}> */
+    protected function getDetectionFileMarkers(): array
+    {
+        return [
+            ['path' => 'configuration.php', 'label' => 'configuration.php'],
+        ];
+    }
+
+    /** @return list<array{table: string, label: string}> */
+    protected function getDetectionTableMarkers(): array
+    {
+        $prefix = $this->dbPrefix ?? 'jos_';
+
+        return [['table' => 'content', 'label' => $prefix . 'content']];
+    }
+
     protected function connectFromCms(string $rootPath): PDO
     {
         $configPath = $rootPath . DIRECTORY_SEPARATOR . 'configuration.php';

@@ -73,6 +73,20 @@ final class Engine
     }
 
     /**
+     * @return list<array{
+     *     name: string,
+     *     label: string,
+     *     detected: bool,
+     *     selected: bool,
+     *     checks: list<array{label: string, passed: bool, level: int, detail?: string}>
+     * }>
+     */
+    public function scanCms(?string $rootPath = null): array
+    {
+        return $this->detector->scanAll($rootPath ?? $this->getRootPath());
+    }
+
+    /**
      * @return array{manifest_path: string, stats: array<string, int>}
      */
     public function export(?string $outputPath = null): array

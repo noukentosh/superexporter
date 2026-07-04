@@ -40,6 +40,7 @@ final class TestRunner
 
         $this->testWordPressRoundTrip();
         $this->testBitrixRoundTrip();
+        $this->testBitrixDetectViaConnectFromCms();
         $this->testJoomlaRoundTrip();
         $this->testModxRoundTrip();
         $this->testOpenCartExport();
@@ -133,6 +134,55 @@ final class TestRunner
             static fn (PDO $pdo) => DrupalSchema::create($pdo),
             static fn (string $root) => DrupalSchema::writeConfig($root),
         );
+    }
+
+    private function testBitrixDetectViaConnectFromCms(): void
+    {
+        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superexport_bitrix_conn_' . uniqid();
+        $root = $tmp . DIRECTORY_SEPARATOR . 'site';
+
+        try {
+            BitrixSchema::writeConfig($root);
+            $pdo = $this->sqlite();
+            BitrixSchema::create($pdo);
+
+            $adapter = new BitrixAdapter(['db' => ['pdo' => $pdo]]);
+            $ref = new \ReflectionClass($adapter);
+
+            $readMeta = $ref->getMethod('readCmsMetadata');
+            $readMeta->setAccessible(true);
+            $readMeta->invoke($adapter, $root);
+
+            if ($adapter->getDbPrefix() !== 'b_') {
+                $this->fail('Bitrix readCmsMetadata: expected db prefix b_');
+            }
+
+            $tableExists = $ref->getMethod('tableExists');
+            $tableExists->setAccessible(true);
+            if (!$tableExists->invoke($adapter, 'iblock_element')) {
+                $this->fail('Bitrix tableExists(iblock_element) failed (table prefix regression)');
+            }
+
+            $bare = new BitrixAdapter();
+            $refBare = new \ReflectionClass($bare);
+            $dbPrefix = $refBare->getProperty('dbPrefix');
+            $dbPrefix->setAccessible(true);
+            $dbPrefix->setValue($bare, 'b_');
+
+            $connect = $refBare->getMethod('connectFromCms');
+            $connect->setAccessible(true);
+            try {
+                $connect->invoke($bare, $root);
+            } catch (\Throwable) {
+                // No MySQL in unit tests; connect may fail after prefix check.
+            }
+
+            if ($dbPrefix->getValue($bare) !== 'b_') {
+                $this->fail('Bitrix connectFromCms cleared db prefix b_');
+            }
+        } finally {
+            $this->cleanup($tmp);
+        }
     }
 
     private function testBitrixToWordPress(): void

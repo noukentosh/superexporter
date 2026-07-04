@@ -45,6 +45,8 @@ final class DashboardController
         return $this->view->render('dashboard', 'Dashboard', [
             'cms' => $cms,
             'cmsError' => $cmsError,
+            'cmsRoot' => $this->engine->getRootPath(),
+            'detectionScan' => $this->engine->scanCms(),
             'storagePath' => $this->engine->getStoragePath(),
             'lastExport' => $this->loadLastExport(),
         ]);

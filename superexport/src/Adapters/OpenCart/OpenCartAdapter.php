@@ -33,6 +33,23 @@ final class OpenCartAdapter extends AbstractPdoAdapter
         return $this->tableExists('product');
     }
 
+    /** @return list<array{path: string, label: string, type?: 'file'|'dir'}> */
+    protected function getDetectionFileMarkers(): array
+    {
+        return [
+            ['path' => 'config.php', 'label' => 'config.php'],
+            ['path' => 'admin/config.php', 'label' => 'admin/config.php'],
+        ];
+    }
+
+    /** @return list<array{table: string, label: string}> */
+    protected function getDetectionTableMarkers(): array
+    {
+        $prefix = $this->dbPrefix ?? 'oc_';
+
+        return [['table' => 'product', 'label' => $prefix . 'product']];
+    }
+
     protected function connectFromCms(string $rootPath): PDO
     {
         $configPath = $rootPath . DIRECTORY_SEPARATOR . 'config.php';

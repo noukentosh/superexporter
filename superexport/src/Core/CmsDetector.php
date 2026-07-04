@@ -61,4 +61,60 @@ final class CmsDetector
 
         return null;
     }
+
+    /**
+     * Run detection for every registered adapter (for diagnostics UI).
+     *
+     * @return list<array{
+     *     name: string,
+     *     label: string,
+     *     detected: bool,
+     *     selected: bool,
+     *     checks: list<array{label: string, passed: bool, level: int, detail?: string}>
+     * }>
+     */
+    public function scanAll(string $rootPath): array
+    {
+        $results = [];
+        $selectedName = null;
+
+        foreach ($this->adapters as $adapter) {
+            $name = $adapter->getName();
+            $probe = $adapter->probeDetection($rootPath);
+            $detected = $probe['detected'];
+            if ($detected && $selectedName === null) {
+                $selectedName = $name;
+            }
+
+            $results[] = [
+                'name' => $name,
+                'label' => self::formatLabel($name),
+                'detected' => $detected,
+                'selected' => false,
+                'checks' => $probe['checks'],
+            ];
+        }
+
+        if ($selectedName !== null) {
+            foreach ($results as &$row) {
+                $row['selected'] = $row['name'] === $selectedName;
+            }
+            unset($row);
+        }
+
+        return $results;
+    }
+
+    private static function formatLabel(string $name): string
+    {
+        return match ($name) {
+            'wordpress' => 'WordPress',
+            'bitrix' => 'Bitrix',
+            'opencart' => 'OpenCart',
+            'joomla' => 'Joomla',
+            'modx' => 'MODX',
+            'drupal' => 'Drupal',
+            default => ucfirst($name),
+        };
+    }
 }

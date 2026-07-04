@@ -1,0 +1,28 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * SuperExport configuration.
+ * Copy to config.php and adjust. Never commit config.php.
+ */
+return [
+    // Required for web access: https://site.com/superexport.php?key=SECRET
+    'secret_key' => 'CHANGE_ME_TO_A_LONG_RANDOM_STRING',
+
+    // CMS installation root (defaults to the directory superexport.php lives in).
+    'cms_root' => null,
+
+    // Where export chunks and manifest.json are written.
+    'storage_path' => __DIR__ . DIRECTORY_SEPARATOR . 'storage',
+
+    // Records per chunk file / import batch.
+    'batch_size' => 500,
+
+    // Optional explicit DB connection (otherwise adapters read the CMS config).
+    'db' => [
+        'dsn' => null,      // e.g. 'mysql:host=localhost;dbname=site;charset=utf8mb4'
+        'user' => null,
+        'password' => null,
+    ],
+];

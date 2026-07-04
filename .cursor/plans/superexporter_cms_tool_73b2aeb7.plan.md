@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: web-ui
     content: Web UI с secret key, mapping wizard, прогресс
-    status: pending
+    status: completed
   - id: testing-docs
     content: SQL-фикстуры, round-trip/cross-CMS тесты, README
     status: pending

@@ -39,6 +39,16 @@ final class Engine
         };
     }
 
+    /**
+     * Replace the progress listener (used by the Web UI to stream progress).
+     *
+     * @param callable(string):void $callback
+     */
+    public function setProgressCallback(callable $callback): void
+    {
+        $this->progressCallback = $callback;
+    }
+
     public function registerAdapter(CmsAdapterInterface $adapter): void
     {
         $this->detector->register($adapter);

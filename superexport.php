@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * SuperExport bootstrap: routes to CLI or Web entry point.
- * Web UI is implemented in a later phase; CLI works now.
+ * Web access requires ?key=SECRET matching secret_key in config.php.
  */
 
 error_reporting(E_ALL);
@@ -16,6 +16,7 @@ use SuperExport\Adapters\AdapterRegistrar;
 use SuperExport\Cli\Commands;
 use SuperExport\Core\Engine;
 use SuperExport\Exceptions\SuperExportException;
+use SuperExport\Web\Router;
 
 /** @return array<string, mixed> */
 function superexport_load_config(): array
@@ -44,7 +45,7 @@ if (PHP_SAPI === 'cli') {
     exit((new Commands($engine))->run($argv));
 }
 
-// --- Web entry point (full UI arrives in phase 5) ---
+// --- Web entry point ---
 
 $engine = new Engine($config);
 AdapterRegistrar::registerAll($engine, $config);
@@ -66,7 +67,9 @@ if ($providedKey === '' || !hash_equals($secret, $providedKey)) {
     exit;
 }
 
-header('Content-Type: text/plain; charset=utf-8');
-echo "SuperExport core is installed.\n";
-echo "Web UI is not available yet; use the CLI:\n";
-echo "  php superexport.php detect | export | import\n";
+$baseUrl = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'superexport.php')) . '?key=' . rawurlencode($providedKey);
+
+set_time_limit(0);
+
+$router = new Router($engine, $baseUrl);
+$router->dispatch((string) ($_GET['action'] ?? ''), (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));

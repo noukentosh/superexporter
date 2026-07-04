@@ -6,14 +6,24 @@ namespace SuperExport\Tests;
 
 use PDO;
 use SuperExport\Adapters\Bitrix\BitrixAdapter;
+use SuperExport\Adapters\Drupal\DrupalAdapter;
+use SuperExport\Adapters\Joomla\JoomlaAdapter;
+use SuperExport\Adapters\Modx\ModxAdapter;
+use SuperExport\Adapters\OpenCart\OpenCartAdapter;
 use SuperExport\Adapters\WordPress\WordPressAdapter;
+use SuperExport\Contracts\CmsAdapterInterface;
 use SuperExport\Core\ExportPipeline;
 use SuperExport\Core\ImportContext;
 use SuperExport\Core\ImportPipeline;
 use SuperExport\Core\IdRemapper;
 use SuperExport\Storage\ManifestManager;
 use SuperExport\Tests\Fixtures\BitrixSchema;
+use SuperExport\Tests\Fixtures\DrupalSchema;
+use SuperExport\Tests\Fixtures\JoomlaSchema;
+use SuperExport\Tests\Fixtures\ModxSchema;
+use SuperExport\Tests\Fixtures\OpenCartSchema;
 use SuperExport\Tests\Fixtures\WordPressSchema;
+use SuperExport\Tests\Unit\CoreUnitTests;
 use SuperExport\Universal\SchemaRegistry;
 use SuperExport\Universal\Serializer;
 
@@ -24,7 +34,16 @@ final class TestRunner
 
     public function runAll(): int
     {
+        foreach ((new CoreUnitTests())->runAll() as $failure) {
+            $this->failures[] = $failure;
+        }
+
         $this->testWordPressRoundTrip();
+        $this->testBitrixRoundTrip();
+        $this->testJoomlaRoundTrip();
+        $this->testModxRoundTrip();
+        $this->testOpenCartExport();
+        $this->testDrupalExport();
         $this->testBitrixToWordPress();
 
         if ($this->failures === []) {
@@ -42,58 +61,78 @@ final class TestRunner
 
     private function testWordPressRoundTrip(): void
     {
-        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superexport_wp_' . uniqid();
-        $storage = $tmp . DIRECTORY_SEPARATOR . 'storage';
-        $root = $tmp . DIRECTORY_SEPARATOR . 'wp';
-        WordPressSchema::writeConfig($root);
-
-        $pdo = new PDO('sqlite::memory:');
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        WordPressSchema::create($pdo);
-
-        $config = ['db' => ['pdo' => $pdo], 'batch_size' => 50];
-        $adapter = new WordPressAdapter($config);
-        if (!$adapter->detect($root)) {
-            $this->fail('WordPress detect failed');
-
-            return;
-        }
-
-        $serializer = new Serializer();
-        $schema = new SchemaRegistry();
-        $manifest = new ManifestManager($serializer, $schema);
-
-        $export = new ExportPipeline($manifest, $serializer, 50);
-        $exportResult = $export->run($adapter, $storage);
-
-        if (($exportResult['stats']['posts'] ?? 0) < 1) {
-            $this->fail('WordPress export produced no posts');
-
-            return;
-        }
-
-        $target = new WordPressAdapter($config);
-        $target->detect($root);
-
-        $import = new ImportPipeline($manifest, $schema, $serializer, 50);
-        $report = $import->run(
-            $target,
-            $storage,
-            new ImportContext(new IdRemapper(), false, 'suffix'),
+        $this->roundTripSameCms(
+            'WordPress',
+            WordPressAdapter::class,
+            'posts',
+            'SELECT COUNT(*) FROM wp_posts WHERE post_type = \'post\'',
+            2,
+            static fn (PDO $pdo) => WordPressSchema::create($pdo),
+            static fn (string $root) => WordPressSchema::writeConfig($root),
         );
+    }
 
-        if (($report['posts']['created'] ?? 0) < 1) {
-            $this->fail('WordPress round-trip import created no posts');
+    private function testBitrixRoundTrip(): void
+    {
+        $this->roundTripSameCms(
+            'Bitrix',
+            BitrixAdapter::class,
+            'posts',
+            'SELECT COUNT(*) FROM b_iblock_element',
+            2,
+            static fn (PDO $pdo) => BitrixSchema::create($pdo),
+            static fn (string $root) => BitrixSchema::writeConfig($root),
+        );
+    }
 
-            return;
-        }
+    private function testJoomlaRoundTrip(): void
+    {
+        $this->roundTripSameCms(
+            'Joomla',
+            JoomlaAdapter::class,
+            'posts',
+            'SELECT COUNT(*) FROM jos_content',
+            2,
+            static fn (PDO $pdo) => JoomlaSchema::create($pdo),
+            static fn (string $root) => JoomlaSchema::writeConfig($root),
+            'Joomla Post',
+        );
+    }
 
-        $count = (int) $pdo->query('SELECT COUNT(*) FROM wp_posts WHERE post_type = \'post\'')->fetchColumn();
-        if ($count < 2) {
-            $this->fail('WordPress round-trip expected at least 2 posts, got ' . $count);
-        }
+    private function testModxRoundTrip(): void
+    {
+        $this->roundTripSameCms(
+            'MODX',
+            ModxAdapter::class,
+            'posts',
+            'SELECT COUNT(*) FROM modx_site_content WHERE isfolder = 0',
+            2,
+            static fn (PDO $pdo) => ModxSchema::create($pdo),
+            static fn (string $root) => ModxSchema::writeConfig($root),
+            'MODX Post',
+        );
+    }
 
-        $this->cleanup($tmp);
+    private function testOpenCartExport(): void
+    {
+        $this->exportSmoke(
+            'OpenCart',
+            OpenCartAdapter::class,
+            'products',
+            static fn (PDO $pdo) => OpenCartSchema::create($pdo),
+            static fn (string $root) => OpenCartSchema::writeConfig($root),
+        );
+    }
+
+    private function testDrupalExport(): void
+    {
+        $this->exportSmoke(
+            'Drupal',
+            DrupalAdapter::class,
+            'posts',
+            static fn (PDO $pdo) => DrupalSchema::create($pdo),
+            static fn (string $root) => DrupalSchema::writeConfig($root),
+        );
     }
 
     private function testBitrixToWordPress(): void
@@ -103,67 +142,206 @@ final class TestRunner
         $bxRoot = $tmp . DIRECTORY_SEPARATOR . 'bitrix_site';
         $wpRoot = $tmp . DIRECTORY_SEPARATOR . 'wp_site';
 
-        BitrixSchema::writeConfig($bxRoot);
-        WordPressSchema::writeConfig($wpRoot);
+        try {
+            BitrixSchema::writeConfig($bxRoot);
+            WordPressSchema::writeConfig($wpRoot);
 
-        $bxPdo = new PDO('sqlite::memory:');
-        $bxPdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        BitrixSchema::create($bxPdo);
+            $bxPdo = $this->sqlite();
+            BitrixSchema::create($bxPdo);
 
-        $wpPdo = new PDO('sqlite::memory:');
-        $wpPdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        WordPressSchema::create($wpPdo);
+            $wpPdo = $this->sqlite();
+            WordPressSchema::create($wpPdo);
 
-        $bxConfig = ['db' => ['pdo' => $bxPdo], 'batch_size' => 50];
-        $wpConfig = ['db' => ['pdo' => $wpPdo], 'batch_size' => 50];
+            $bxAdapter = new BitrixAdapter(['db' => ['pdo' => $bxPdo], 'batch_size' => 50]);
+            if (!$bxAdapter->detect($bxRoot)) {
+                $this->fail('Bitrix detect failed');
 
-        $bxAdapter = new BitrixAdapter($bxConfig);
-        if (!$bxAdapter->detect($bxRoot)) {
-            $this->fail('Bitrix detect failed');
+                return;
+            }
 
-            return;
+            $manifest = $this->manifest();
+            $export = new ExportPipeline($manifest, new Serializer(), 50);
+            $exportResult = $export->run($bxAdapter, $storage);
+
+            if (($exportResult['stats']['posts'] ?? 0) < 1) {
+                $this->fail('Bitrix export produced no posts');
+
+                return;
+            }
+
+            $wpAdapter = new WordPressAdapter(['db' => ['pdo' => $wpPdo], 'batch_size' => 50]);
+            if (!$wpAdapter->detect($wpRoot)) {
+                $this->fail('WordPress detect failed for cross-import');
+
+                return;
+            }
+
+            $import = new ImportPipeline($manifest, new SchemaRegistry(), new Serializer(), 50);
+            $report = $import->run(
+                $wpAdapter,
+                $storage,
+                new ImportContext(new IdRemapper(), false, 'suffix'),
+            );
+
+            if (($report['posts']['created'] ?? 0) < 1) {
+                $this->fail('Bitrix→WP cross-import created no posts');
+
+                return;
+            }
+
+            $titles = $wpPdo->query('SELECT post_title FROM wp_posts WHERE post_type = \'post\' ORDER BY ID')
+                ->fetchAll(PDO::FETCH_COLUMN);
+            if (!in_array('Bitrix Post', $titles, true)) {
+                $this->fail('Bitrix→WP: expected imported title "Bitrix Post"');
+            }
+        } finally {
+            $this->cleanup($tmp);
         }
+    }
 
-        $serializer = new Serializer();
-        $schema = new SchemaRegistry();
-        $manifest = new ManifestManager($serializer, $schema);
+    /**
+     * @param class-string $adapterClass
+     * @param callable(PDO): void $seed
+     * @param callable(string): void $writeConfig
+     */
+    private function roundTripSameCms(
+        string $label,
+        string $adapterClass,
+        string $statKey,
+        string $countSql,
+        int $minRows,
+        callable $seed,
+        callable $writeConfig,
+        ?string $expectedTitle = null,
+    ): void {
+        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superexport_' . strtolower($label) . '_' . uniqid();
+        $storage = $tmp . DIRECTORY_SEPARATOR . 'storage';
+        $root = $tmp . DIRECTORY_SEPARATOR . 'site';
 
-        $export = new ExportPipeline($manifest, $serializer, 50);
-        $exportResult = $export->run($bxAdapter, $storage);
+        try {
+            $writeConfig($root);
+            $pdo = $this->sqlite();
+            $seed($pdo);
 
-        if (($exportResult['stats']['posts'] ?? 0) < 1) {
-            $this->fail('Bitrix export produced no posts');
+            /** @var CmsAdapterInterface $adapter */
+            $adapter = new $adapterClass(['db' => ['pdo' => $pdo], 'batch_size' => 50]);
+            if (!$adapter->detect($root)) {
+                $this->fail("{$label} detect failed");
 
-            return;
+                return;
+            }
+
+            $manifest = $this->manifest();
+            $export = new ExportPipeline($manifest, new Serializer(), 50);
+            $exportResult = $export->run($adapter, $storage);
+
+            if (($exportResult['stats'][$statKey] ?? 0) < 1) {
+                $this->fail("{$label} export produced no {$statKey}");
+
+                return;
+            }
+
+            /** @var CmsAdapterInterface $target */
+            $target = new $adapterClass(['db' => ['pdo' => $pdo], 'batch_size' => 50]);
+            $target->detect($root);
+
+            $import = new ImportPipeline($manifest, new SchemaRegistry(), new Serializer(), 50);
+            $report = $import->run(
+                $target,
+                $storage,
+                new ImportContext(new IdRemapper(), false, 'suffix'),
+            );
+
+            if (($report[$statKey]['created'] ?? 0) < 1) {
+                $this->fail("{$label} round-trip import created no {$statKey}");
+
+                return;
+            }
+
+            $count = (int) $pdo->query($countSql)->fetchColumn();
+            if ($count < $minRows) {
+                $this->fail("{$label} round-trip expected at least {$minRows} rows, got {$count}");
+            }
+
+            if ($expectedTitle !== null) {
+                $found = false;
+                foreach ($this->findTitles($pdo, $label) as $title) {
+                    if ($title === $expectedTitle) {
+                        $found = true;
+                        break;
+                    }
+                }
+                if (!$found) {
+                    $this->fail("{$label} round-trip: expected title \"{$expectedTitle}\"");
+                }
+            }
+        } finally {
+            $this->cleanup($tmp);
         }
+    }
 
-        $wpAdapter = new WordPressAdapter($wpConfig);
-        if (!$wpAdapter->detect($wpRoot)) {
-            $this->fail('WordPress detect failed for cross-import');
+    /**
+     * @param class-string $adapterClass
+     * @param callable(PDO): void $seed
+     * @param callable(string): void $writeConfig
+     */
+    private function exportSmoke(
+        string $label,
+        string $adapterClass,
+        string $statKey,
+        callable $seed,
+        callable $writeConfig,
+    ): void {
+        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superexport_export_' . strtolower($label) . '_' . uniqid();
+        $storage = $tmp . DIRECTORY_SEPARATOR . 'storage';
+        $root = $tmp . DIRECTORY_SEPARATOR . 'site';
 
-            return;
+        try {
+            $writeConfig($root);
+            $pdo = $this->sqlite();
+            $seed($pdo);
+
+            /** @var CmsAdapterInterface $adapter */
+            $adapter = new $adapterClass(['db' => ['pdo' => $pdo], 'batch_size' => 50]);
+            if (!$adapter->detect($root)) {
+                $this->fail("{$label} detect failed (export smoke)");
+
+                return;
+            }
+
+            $manifest = $this->manifest();
+            $export = new ExportPipeline($manifest, new Serializer(), 50);
+            $result = $export->run($adapter, $storage);
+
+            if (($result['stats'][$statKey] ?? 0) < 1) {
+                $this->fail("{$label} export smoke: no {$statKey} exported");
+            }
+        } finally {
+            $this->cleanup($tmp);
         }
+    }
 
-        $import = new ImportPipeline($manifest, $schema, $serializer, 50);
-        $report = $import->run(
-            $wpAdapter,
-            $storage,
-            new ImportContext(new IdRemapper(), false, 'suffix'),
-        );
+    /** @return list<string> */
+    private function findTitles(PDO $pdo, string $label): array
+    {
+        return match ($label) {
+            'Joomla' => $pdo->query('SELECT title FROM jos_content')->fetchAll(PDO::FETCH_COLUMN),
+            'MODX' => $pdo->query('SELECT pagetitle FROM modx_site_content')->fetchAll(PDO::FETCH_COLUMN),
+            default => [],
+        };
+    }
 
-        if (($report['posts']['created'] ?? 0) < 1) {
-            $this->fail('Bitrix→WP cross-import created no posts');
+    private function sqlite(): PDO
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-            return;
-        }
+        return $pdo;
+    }
 
-        $stmt = $wpPdo->query('SELECT post_title FROM wp_posts WHERE post_type = \'post\' ORDER BY ID');
-        $titles = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        if (!in_array('Bitrix Post', $titles, true)) {
-            $this->fail('Bitrix→WP: expected imported title "Bitrix Post"');
-        }
-
-        $this->cleanup($tmp);
+    private function manifest(): ManifestManager
+    {
+        return new ManifestManager(new Serializer(), new SchemaRegistry());
     }
 
     private function fail(string $message): void

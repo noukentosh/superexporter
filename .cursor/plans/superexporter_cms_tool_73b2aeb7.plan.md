@@ -25,7 +25,7 @@ todos:
     status: completed
   - id: testing-docs
     content: SQL-фикстуры, round-trip/cross-CMS тесты, README
-    status: pending
+    status: completed
 isProject: false
 ---
 

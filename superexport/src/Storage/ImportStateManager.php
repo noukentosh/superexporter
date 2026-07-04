@@ -6,7 +6,7 @@ namespace SuperExport\Storage;
 
 use SuperExport\Core\IdRemapper;
 use SuperExport\Exceptions\SuperExportException;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\Serializer;
 
 /**
@@ -105,31 +105,31 @@ final class ImportStateManager
         ];
     }
 
-    public function isTypeCompleted(array $state, EntityType $type): bool
+    public function isTypeCompleted(array $state, EntityKey $key): bool
     {
-        return in_array($type->value, $state['completed_types'], true);
+        return in_array($key->value, $state['completed_types'], true);
     }
 
-    public function isChunkCompleted(array $state, EntityType $type, string $chunkFile): bool
+    public function isChunkCompleted(array $state, EntityKey $key, string $chunkFile): bool
     {
-        $done = $state['completed_chunks'][$type->value] ?? [];
+        $done = $state['completed_chunks'][$key->value] ?? [];
 
         return in_array($chunkFile, $done, true);
     }
 
-    public function markChunkCompleted(array &$state, EntityType $type, string $chunkFile): void
+    public function markChunkCompleted(array &$state, EntityKey $key, string $chunkFile): void
     {
-        $state['current_type'] = $type->value;
-        $state['completed_chunks'][$type->value] ??= [];
-        if (!in_array($chunkFile, $state['completed_chunks'][$type->value], true)) {
-            $state['completed_chunks'][$type->value][] = $chunkFile;
+        $state['current_type'] = $key->value;
+        $state['completed_chunks'][$key->value] ??= [];
+        if (!in_array($chunkFile, $state['completed_chunks'][$key->value], true)) {
+            $state['completed_chunks'][$key->value][] = $chunkFile;
         }
     }
 
-    public function markTypeCompleted(array &$state, EntityType $type): void
+    public function markTypeCompleted(array &$state, EntityKey $key): void
     {
-        if (!in_array($type->value, $state['completed_types'], true)) {
-            $state['completed_types'][] = $type->value;
+        if (!in_array($key->value, $state['completed_types'], true)) {
+            $state['completed_types'][] = $key->value;
         }
         $state['current_type'] = null;
     }

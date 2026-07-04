@@ -12,7 +12,10 @@ final class BitrixSchema
     {
         $pdo->exec('CREATE TABLE b_iblock (
             ID INTEGER PRIMARY KEY,
-            IBLOCK_TYPE_ID TEXT
+            IBLOCK_TYPE_ID TEXT,
+            CODE TEXT,
+            NAME TEXT,
+            ACTIVE TEXT DEFAULT \'Y\'
         )');
         $pdo->exec('CREATE TABLE b_iblock_element (
             ID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,10 +50,13 @@ final class BitrixSchema
             VALUE TEXT
         )');
 
-        $pdo->exec("INSERT INTO b_iblock (ID, IBLOCK_TYPE_ID) VALUES (1, 'news')");
+        $pdo->exec("INSERT INTO b_iblock (ID, IBLOCK_TYPE_ID, CODE, NAME, ACTIVE) VALUES (1, 'news', 'news', 'News', 'Y')");
+        $pdo->exec("INSERT INTO b_iblock (ID, IBLOCK_TYPE_ID, CODE, NAME, ACTIVE) VALUES (2, 'services', 'services', 'Services', 'Y')");
         $pdo->exec("INSERT INTO b_iblock_section (IBLOCK_ID, NAME, CODE, DESCRIPTION) VALUES (1, 'Bitrix Cat', 'bitrix-cat', 'Section')");
         $pdo->exec("INSERT INTO b_iblock_element (IBLOCK_ID, NAME, CODE, DETAIL_TEXT, PREVIEW_TEXT, ACTIVE, DATE_CREATE, TIMESTAMP_X, IBLOCK_SECTION_ID)
             VALUES (1, 'Bitrix Post', 'bitrix-post', '<p>From Bitrix</p>', 'Excerpt', 'Y', datetime('now'), datetime('now'), 1)");
+        $pdo->exec("INSERT INTO b_iblock_element (IBLOCK_ID, NAME, CODE, DETAIL_TEXT, PREVIEW_TEXT, ACTIVE, DATE_CREATE, TIMESTAMP_X)
+            VALUES (2, 'Service Item', 'service-item', '<p>Custom iblock</p>', 'Excerpt', 'Y', datetime('now'), datetime('now'))");
     }
 
     public static function writeConfig(string $dir): void

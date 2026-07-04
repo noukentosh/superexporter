@@ -32,16 +32,49 @@ https://yoursite.com/superexport.php?key=YOUR_SECRET_KEY
 
 | CMS        | Export | Import | Entities                          |
 |------------|--------|--------|-----------------------------------|
-| WordPress  | yes    | yes    | posts, pages, categories, tags, products (WooCommerce) |
-| Bitrix     | yes    | yes    | posts, pages, categories, products (catalog iblock) |
+| WordPress  | yes    | yes    | posts, pages, categories, tags, products (WooCommerce), **custom post types** (`cpt:*`), **custom taxonomies** (`taxonomy:*`) |
+| Bitrix     | yes    | yes    | posts, products (catalog), categories, **per-iblock entities** (`iblock:*`, `iblock_section:*`) |
 | OpenCart   | yes    | yes    | products, categories              |
 | Joomla     | yes    | yes    | posts, pages, categories          |
 | MODX       | yes    | yes    | posts, pages                      |
 | Drupal     | yes    | yes    | posts, pages, categories, products (Commerce) |
 
-Cross-CMS import uses the canonical schema; field mapping defaults come from each adapter.
+Cross-CMS import uses the canonical schema; field mapping defaults come from each adapter. Entity types are auto-discovered and mapped via `canonical_kind` (e.g. `cpt:portfolio` → `posts`, `iblock:5` → `posts`).
 
-## Export format
+## Export format (manifest 1.1.0)
+
+```
+storage/
+  manifest.json          # format 1.1.0, source CMS, schema, entity_definitions, stats, chunks
+  entities/
+    posts/posts_0001.json
+    cpt__portfolio/cpt__portfolio_0001.json   # filesystem-safe path for cpt:portfolio
+    iblock__12/iblock__12_0001.json
+    ...
+```
+
+### Entity keys
+
+| Key pattern | CMS | Example |
+|-------------|-----|---------|
+| `posts`, `pages`, `products` | Standard canonical types | `posts` |
+| `cpt:{name}` | WordPress custom post type | `cpt:portfolio` |
+| `taxonomy:{name}` | WordPress custom taxonomy | `taxonomy:genre` |
+| `iblock:{id}` | Bitrix information block | `iblock:12` |
+| `iblock_section:{id}` | Bitrix iblock sections | `iblock_section:12` |
+
+Manifest `schema.entity_definitions` stores label, `canonical_kind`, and native source metadata for cross-CMS mapping.
+
+### Cross-CMS entity mapping (examples)
+
+| Source | Target WordPress | Target Bitrix |
+|--------|------------------|---------------|
+| `iblock:5` (post) | `posts` | — |
+| `cpt:portfolio` | — | `posts` |
+| `taxonomy:genre` | `tags` | `categories` |
+| `products` | `products` | `products` |
+
+## Export format (legacy 1.0.x)
 
 ```
 storage/
@@ -51,6 +84,8 @@ storage/
     categories/categories_0001.json
     ...
 ```
+
+See **Export format (manifest 1.1.0)** above for dynamic entity keys.
 
 ## Testing
 

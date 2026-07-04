@@ -6,20 +6,22 @@ namespace SuperExport\Core;
 
 use SuperExport\Contracts\ImportContextInterface;
 use SuperExport\Exceptions\SuperExportException;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityKey;
 
 final class ImportContext implements ImportContextInterface
 {
     public const DUPLICATE_STRATEGIES = ['skip', 'suffix', 'overwrite'];
 
     /**
-     * @param array<string, array<string, string>> $fieldOverrides entity type => [canonical => target field]
+     * @param array<string, array<string, string>> $fieldOverrides entity key => [canonical => target field]
+     * @param array<string, string>                $entityMappingOverrides source key => target key
      */
     public function __construct(
         private readonly IdRemapper $idRemapper,
         private readonly bool $dryRun = false,
         private readonly string $duplicateStrategy = 'skip',
         private readonly array $fieldOverrides = [],
+        private readonly array $entityMappingOverrides = [],
     ) {
         if (!in_array($duplicateStrategy, self::DUPLICATE_STRATEGIES, true)) {
             throw new SuperExportException(
@@ -39,9 +41,14 @@ final class ImportContext implements ImportContextInterface
         return $this->duplicateStrategy;
     }
 
-    public function getFieldOverrides(EntityType $type): array
+    public function getFieldOverrides(EntityKey $key): array
     {
-        return $this->fieldOverrides[$type->value] ?? [];
+        return $this->fieldOverrides[$key->value] ?? [];
+    }
+
+    public function getEntityMappingOverrides(): array
+    {
+        return $this->entityMappingOverrides;
     }
 
     public function getIdRemapper(): IdRemapper

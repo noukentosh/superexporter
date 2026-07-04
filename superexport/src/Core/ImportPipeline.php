@@ -10,7 +10,8 @@ use SuperExport\Contracts\ImportContextInterface;
 use SuperExport\Storage\ImportStateManager;
 use SuperExport\Storage\JsonChunkReader;
 use SuperExport\Storage\ManifestManager;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\SchemaRegistry;
 use SuperExport\Universal\Serializer;
 
@@ -20,15 +21,6 @@ use SuperExport\Universal\Serializer;
  */
 final class ImportPipeline
 {
-    private const IMPORT_ORDER = [
-        EntityType::Category,
-        EntityType::Tag,
-        EntityType::Post,
-        EntityType::Page,
-        EntityType::Product,
-        EntityType::Meta,
-    ];
-
     /** @var callable(string):void */
     private $progressCallback;
 
@@ -37,6 +29,7 @@ final class ImportPipeline
         private readonly SchemaRegistry $schemaRegistry,
         private readonly Serializer $serializer,
         private readonly int $batchSize = 500,
+        private readonly EntityMapper $entityMapper = new EntityMapper(),
         ?callable $progressCallback = null,
     ) {
         $this->progressCallback = $progressCallback ?? static function (string $message): void {
@@ -45,7 +38,7 @@ final class ImportPipeline
 
     /**
      * @return array<string, array{created: int, skipped: int, errors: list<string>}>
-     *         Per-entity-type report.
+     *         Per-entity-key report.
      */
     public function run(
         CmsAdapterInterface $targetAdapter,
@@ -68,42 +61,55 @@ final class ImportPipeline
         }
 
         $available = $this->manifestManager->getEntities($manifest);
-        $supported = $targetAdapter->getSupportedEntities();
+        $sourceDefinitions = $this->manifestManager->getEntityDefinitions($manifest);
+        $importOrder = $this->entityMapper->sortForImport($available);
         $report = [];
 
-        foreach (self::IMPORT_ORDER as $type) {
-            if (!in_array($type, $available, true)) {
-                continue;
-            }
-            if (!in_array($type, $supported, true)) {
-                $this->report(sprintf('Skipping %s: not supported by %s', $type->value, $targetAdapter->getName()));
-                continue;
-            }
-            if ($state !== null && $stateManager->isTypeCompleted($state, $type)) {
-                $this->report(sprintf('Skipping %s: already completed (resume).', $type->value));
+        foreach ($importOrder as $sourceKey) {
+            $definition = $sourceDefinitions[$sourceKey->value]
+                ?? EntityDefinition::forStandard($sourceKey->toStandardType() ?? \SuperExport\Universal\EntityType::Post);
+
+            $targetKey = $this->entityMapper->map(
+                $sourceKey,
+                $definition,
+                $targetAdapter,
+                $sourceDefinitions,
+                $context->getEntityMappingOverrides(),
+            );
+
+            if ($targetKey === null) {
+                $this->report(sprintf('Skipping %s: no matching target entity on %s', $sourceKey->value, $targetAdapter->getName()));
+                $report[$sourceKey->value] = ['created' => 0, 'skipped' => 0, 'errors' => ['No target entity mapping']];
                 continue;
             }
 
-            $chunks = $this->manifestManager->getChunks($manifest, $type);
+            if ($state !== null && $stateManager->isTypeCompleted($state, $sourceKey)) {
+                $this->report(sprintf('Skipping %s: already completed (resume).', $sourceKey->value));
+                continue;
+            }
+
+            $chunks = $this->manifestManager->getChunks($manifest, $sourceKey);
             $result = $this->importType(
                 $targetAdapter,
                 $reader,
                 $context,
-                $type,
+                $sourceKey,
+                $targetKey,
                 $chunks,
                 $storagePath,
                 $stateManager,
                 $state,
             );
 
-            $report[$type->value] = [
+            $report[$sourceKey->value] = [
                 'created' => $result->created,
                 'skipped' => $result->skipped,
                 'errors' => $result->errors,
+                'target' => $targetKey->value,
             ];
 
             if ($state !== null && !$context->isDryRun()) {
-                $stateManager->markTypeCompleted($state, $type);
+                $stateManager->markTypeCompleted($state, $sourceKey);
                 $stateManager->syncIdMap($state, $context->getIdRemapper());
                 $stateManager->save($storagePath, $state);
             }
@@ -119,53 +125,58 @@ final class ImportPipeline
 
     /**
      * @param list<string> $chunks
-     */
-    /**
-     * @param list<string> $chunks
      * @param array<string, mixed>|null $state
      */
     private function importType(
         CmsAdapterInterface $adapter,
         JsonChunkReader $reader,
         ImportContextInterface $context,
-        EntityType $type,
+        EntityKey $sourceKey,
+        EntityKey $targetKey,
         array $chunks,
         string $storagePath,
         ImportStateManager $stateManager,
         ?array &$state,
     ): ImportBatchResult {
         $mode = $context->isDryRun() ? ' (dry-run)' : '';
-        $this->report(sprintf('Importing %s%s: %d chunk(s)', $type->value, $mode, count($chunks)));
+        $mapLabel = $sourceKey->value !== $targetKey->value
+            ? sprintf(' (%s → %s)', $sourceKey->value, $targetKey->value)
+            : '';
+        $this->report(sprintf('Importing %s%s%s: %d chunk(s)', $sourceKey->value, $mapLabel, $mode, count($chunks)));
 
         $total = new ImportBatchResult();
 
         foreach ($chunks as $chunkFile) {
-            if ($state !== null && $stateManager->isChunkCompleted($state, $type, $chunkFile)) {
+            if ($state !== null && $stateManager->isChunkCompleted($state, $sourceKey, $chunkFile)) {
                 $this->report(sprintf('  skipping chunk %s (resume)', $chunkFile));
                 continue;
             }
 
             $batch = [];
-            foreach ($reader->readChunk($type, $chunkFile) as $record) {
-                $validationErrors = $this->schemaRegistry->validate($type, $record);
+            foreach ($reader->readChunk($sourceKey, $chunkFile) as $record) {
+                $validationErrors = $this->schemaRegistry->validate($sourceKey, $record);
                 if ($validationErrors !== []) {
                     $total = $total->merge(new ImportBatchResult(skipped: 1, errors: $validationErrors));
                     continue;
                 }
 
+                if ($sourceKey->value !== $targetKey->value) {
+                    $record = $this->annotateCrossCmsRecord($record, $sourceKey);
+                }
+
                 $batch[] = $record;
                 if (count($batch) >= $this->batchSize) {
-                    $total = $this->flushBatch($adapter, $context, $type, $batch, $total);
+                    $total = $this->flushBatch($adapter, $context, $sourceKey, $targetKey, $batch, $total);
                     $batch = [];
                 }
             }
 
             if ($batch !== []) {
-                $total = $this->flushBatch($adapter, $context, $type, $batch, $total);
+                $total = $this->flushBatch($adapter, $context, $sourceKey, $targetKey, $batch, $total);
             }
 
             if ($state !== null && !$context->isDryRun()) {
-                $stateManager->markChunkCompleted($state, $type, $chunkFile);
+                $stateManager->markChunkCompleted($state, $sourceKey, $chunkFile);
                 $stateManager->syncIdMap($state, $context->getIdRemapper());
                 $stateManager->save($storagePath, $state);
             }
@@ -173,7 +184,7 @@ final class ImportPipeline
 
         $this->report(sprintf(
             '  %s done: created=%d skipped=%d errors=%d',
-            $type->value,
+            $sourceKey->value,
             $total->created,
             $total->skipped,
             count($total->errors)
@@ -188,14 +199,25 @@ final class ImportPipeline
     private function flushBatch(
         CmsAdapterInterface $adapter,
         ImportContextInterface $context,
-        EntityType $type,
+        EntityKey $sourceKey,
+        EntityKey $targetKey,
         array $batch,
         ImportBatchResult $total,
     ): ImportBatchResult {
-        $result = $adapter->importEntities($type, $batch, $context);
-        $context->getIdRemapper()->rememberBatch($type, $result->idMap);
+        $result = $adapter->importEntities($targetKey, $batch, $context);
+        $context->getIdRemapper()->rememberBatch($sourceKey, $result->idMap);
 
         return $total->merge($result);
+    }
+
+    /** @param array<string, mixed> $record */
+    private function annotateCrossCmsRecord(array $record, EntityKey $sourceKey): array
+    {
+        $meta = $record['meta'] ?? [];
+        $meta[] = ['key' => '_source_entity_key', 'value' => $sourceKey->value, 'type' => 'string'];
+        $record['meta'] = $meta;
+
+        return $record;
     }
 
     private function report(string $message): void

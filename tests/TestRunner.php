@@ -46,6 +46,8 @@ final class TestRunner
         $this->testOpenCartExport();
         $this->testDrupalExport();
         $this->testBitrixToWordPress();
+        $this->testWordPressCptDiscovery();
+        $this->testBitrixCustomIblockDiscovery();
 
         if ($this->failures === []) {
             echo "All tests passed.\n";
@@ -179,6 +181,76 @@ final class TestRunner
 
             if ($dbPrefix->getValue($bare) !== 'b_') {
                 $this->fail('Bitrix connectFromCms cleared db prefix b_');
+            }
+        } finally {
+            $this->cleanup($tmp);
+        }
+    }
+
+    private function testWordPressCptDiscovery(): void
+    {
+        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superexport_wpcpt_' . uniqid();
+        $storage = $tmp . DIRECTORY_SEPARATOR . 'storage';
+        $root = $tmp . DIRECTORY_SEPARATOR . 'site';
+
+        try {
+            WordPressSchema::writeConfig($root);
+            $pdo = $this->sqlite();
+            WordPressSchema::create($pdo);
+
+            $adapter = new WordPressAdapter(['db' => ['pdo' => $pdo], 'batch_size' => 50]);
+            if (!$adapter->detect($root)) {
+                $this->fail('WordPress CPT detect failed');
+
+                return;
+            }
+
+            $keys = array_map(static fn ($k) => $k->value, $adapter->getSupportedEntities());
+            if (!in_array('cpt:portfolio', $keys, true)) {
+                $this->fail('WordPress discovery missing cpt:portfolio');
+            }
+
+            $manifest = $this->manifest();
+            $export = new ExportPipeline($manifest, new Serializer(), 50);
+            $result = $export->run($adapter, $storage);
+
+            if (($result['stats']['cpt:portfolio'] ?? 0) < 1) {
+                $this->fail('WordPress CPT export produced no cpt:portfolio records');
+            }
+        } finally {
+            $this->cleanup($tmp);
+        }
+    }
+
+    private function testBitrixCustomIblockDiscovery(): void
+    {
+        $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superexport_bxib_' . uniqid();
+        $storage = $tmp . DIRECTORY_SEPARATOR . 'storage';
+        $root = $tmp . DIRECTORY_SEPARATOR . 'site';
+
+        try {
+            BitrixSchema::writeConfig($root);
+            $pdo = $this->sqlite();
+            BitrixSchema::create($pdo);
+
+            $adapter = new BitrixAdapter(['db' => ['pdo' => $pdo], 'batch_size' => 50]);
+            if (!$adapter->detect($root)) {
+                $this->fail('Bitrix custom iblock detect failed');
+
+                return;
+            }
+
+            $keys = array_map(static fn ($k) => $k->value, $adapter->getSupportedEntities());
+            if (!in_array('iblock:2', $keys, true)) {
+                $this->fail('Bitrix discovery missing iblock:2 for services type');
+            }
+
+            $manifest = $this->manifest();
+            $export = new ExportPipeline($manifest, new Serializer(), 50);
+            $result = $export->run($adapter, $storage);
+
+            if (($result['stats']['iblock:2'] ?? 0) < 1) {
+                $this->fail('Bitrix custom iblock export produced no iblock:2 records');
             }
         } finally {
             $this->cleanup($tmp);

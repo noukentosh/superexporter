@@ -8,6 +8,7 @@ use SuperExport\Contracts\CmsAdapterInterface;
 use SuperExport\Exceptions\SuperExportException;
 use SuperExport\Storage\JsonChunkWriter;
 use SuperExport\Storage\ManifestManager;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\Serializer;
 
 /**
@@ -37,19 +38,20 @@ final class ExportPipeline
 
         $writer = new JsonChunkWriter($storagePath, $this->serializer, $this->batchSize);
         $entities = $adapter->getSupportedEntities();
+        $definitions = $adapter->getEntityDefinitions();
         $stats = [];
 
-        foreach ($entities as $type) {
-            $total = $adapter->countEntities($type);
-            $stats[$type->value] = $total;
-            $this->report(sprintf('Exporting %s: %d records', $type->value, $total));
+        foreach ($entities as $key) {
+            $total = $adapter->countEntities($key);
+            $stats[$key->value] = $total;
+            $this->report(sprintf('Exporting %s: %d records', $key->value, $total));
 
             $done = 0;
-            foreach ($adapter->exportEntities($type, $this->batchSize) as $record) {
-                $writer->write($type, $record);
+            foreach ($adapter->exportEntities($key, $this->batchSize) as $record) {
+                $writer->write($key, $record);
                 $done++;
                 if ($done % $this->batchSize === 0) {
-                    $this->report(sprintf('  %s: %d/%d', $type->value, $done, $total));
+                    $this->report(sprintf('  %s: %d/%d', $key->value, $done, $total));
                 }
             }
         }
@@ -67,6 +69,7 @@ final class ExportPipeline
             stats: $stats,
             sourceFieldMap: $adapter->getFieldMap(),
             chunks: $chunks,
+            entityDefinitions: $definitions,
         );
 
         $manifestPath = $this->manifestManager->save($storagePath, $manifest);

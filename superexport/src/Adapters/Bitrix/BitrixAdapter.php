@@ -10,18 +10,15 @@ use SuperExport\Contracts\ImportBatchResult;
 use SuperExport\Contracts\ImportContextInterface;
 use SuperExport\Exceptions\SuperExportException;
 use SuperExport\Universal\Entity\Category;
-use SuperExport\Universal\Entity\Page;
 use SuperExport\Universal\Entity\Post;
 use SuperExport\Universal\Entity\Product;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\EntityType;
 
 final class BitrixAdapter extends AbstractPdoAdapter
 {
-    /** @var list<int> */
-    private array $newsIblockIds = [];
-
-    /** @var list<int> */
-    private array $catalogIblockIds = [];
+    private ?BitrixIblockDiscovery $discovery = null;
 
     public function getName(): string
     {
@@ -140,52 +137,47 @@ final class BitrixAdapter extends AbstractPdoAdapter
         $this->dbPrefix = 'b_';
         $this->siteUrl = null;
         $this->cmsVersion = null;
-
-        if ($this->tableExists('iblock')) {
-            $stmt = $this->getPdo()->query(
-                'SELECT ID FROM ' . $this->table('iblock') . " WHERE IBLOCK_TYPE_ID IN ('news','content','catalog')",
-            );
-            foreach ($stmt->fetchAll() as $row) {
-                $id = (int) $row['ID'];
-                $typeStmt = $this->getPdo()->prepare(
-                    'SELECT IBLOCK_TYPE_ID FROM ' . $this->table('iblock') . ' WHERE ID = :id',
-                );
-                $typeStmt->execute(['id' => $id]);
-                $type = (string) $typeStmt->fetchColumn();
-                if ($type === 'catalog') {
-                    $this->catalogIblockIds[] = $id;
-                } else {
-                    $this->newsIblockIds[] = $id;
-                }
-            }
-        }
+        $this->discovery = new BitrixIblockDiscovery($this->getPdo(), $this->dbPrefix);
     }
 
-    /** @return list<EntityType> */
+    private function getDiscovery(): BitrixIblockDiscovery
+    {
+        if ($this->discovery === null) {
+            $this->discovery = new BitrixIblockDiscovery($this->getPdo(), $this->dbPrefix ?? 'b_');
+        }
+
+        return $this->discovery;
+    }
+
+    /** @return list<EntityKey> */
     public function getSupportedEntities(): array
     {
-        $entities = [EntityType::Category, EntityType::Post, EntityType::Page];
-        if ($this->catalogIblockIds !== []) {
-            $entities[] = EntityType::Product;
-        }
-
-        return $entities;
+        return $this->getDiscovery()->getEntityKeys();
     }
 
-    public function countEntities(EntityType $type): int
+    /** @return array<string, EntityDefinition> */
+    public function getEntityDefinitions(): array
     {
-        return match ($type) {
-            EntityType::Post => $this->countElements($this->newsIblockIds),
-            EntityType::Page => $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('iblock_element') . ' WHERE CODE != \'\' AND IBLOCK_ID IN ('
-                . $this->idList($this->newsIblockIds) . ')',
-            ),
-            EntityType::Product => $this->countElements($this->catalogIblockIds),
-            EntityType::Category => $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('iblock_section'),
-            ),
-            EntityType::Tag, EntityType::Meta => 0,
-        };
+        return $this->getDiscovery()->getDefinitions();
+    }
+
+    public function countEntities(EntityKey $key): int
+    {
+        if ($key->isTaxonomy()) {
+            $iblockId = $this->getDiscovery()->resolveSectionIblockId($key);
+            if ($iblockId === null) {
+                return $this->scalarCount('SELECT COUNT(*) FROM ' . $this->table('iblock_section'));
+            }
+
+            return $this->scalarCount(
+                'SELECT COUNT(*) FROM ' . $this->table('iblock_section') . ' WHERE IBLOCK_ID = :id',
+                ['id' => $iblockId],
+            );
+        }
+
+        $iblockIds = $this->getDiscovery()->getIblockIdsForKey($key);
+
+        return $this->countElements($iblockIds);
     }
 
     /** @param list<int> $iblockIds */
@@ -206,15 +198,19 @@ final class BitrixAdapter extends AbstractPdoAdapter
         return $ids === [] ? '0' : implode(',', array_map('intval', $ids));
     }
 
-    public function exportEntities(EntityType $type, int $batchSize): \Generator
+    public function exportEntities(EntityKey $key, int $batchSize): \Generator
     {
-        return match ($type) {
-            EntityType::Post => $this->exportElements($this->newsIblockIds, 'post', $batchSize),
-            EntityType::Page => $this->exportElements($this->newsIblockIds, 'page', $batchSize),
-            EntityType::Product => $this->exportElements($this->catalogIblockIds, 'product', $batchSize),
-            EntityType::Category => $this->exportCategories($batchSize),
-            EntityType::Tag, EntityType::Meta => $this->emptyGenerator(),
-        };
+        if ($key->isTaxonomy()) {
+            return $this->exportCategories($key, $batchSize);
+        }
+
+        $iblockIds = $this->getDiscovery()->getIblockIdsForKey($key);
+        $def = $this->getEntityDefinitions()[$key->value] ?? null;
+        $kind = ($def !== null && $def->canonicalKind === EntityDefinition::CANONICAL_PRODUCT)
+            ? 'product'
+            : 'post';
+
+        return $this->exportElements($iblockIds, $kind, $batchSize);
     }
 
     /** @return array<string, string> */
@@ -229,17 +225,17 @@ final class BitrixAdapter extends AbstractPdoAdapter
         ];
     }
 
-    public function importEntities(EntityType $type, array $entities, ImportContextInterface $context): ImportBatchResult
+    public function importEntities(EntityKey $key, array $entities, ImportContextInterface $context): ImportBatchResult
     {
         if ($context->isDryRun()) {
             return $this->dryRunResult($entities);
         }
 
-        return match ($type) {
-            EntityType::Post, EntityType::Page, EntityType::Product => $this->importElements($entities, $type, $context),
-            EntityType::Category => $this->importCategories($entities, $context),
-            EntityType::Tag, EntityType::Meta => new ImportBatchResult(),
-        };
+        if ($key->isTaxonomy()) {
+            return $this->importCategories($entities, $key, $context);
+        }
+
+        return $this->importElements($entities, $key, $context);
     }
 
     /** @param list<int> $iblockIds */
@@ -277,11 +273,9 @@ final class BitrixAdapter extends AbstractPdoAdapter
                 'meta' => $meta,
             ];
 
-            $entity = match ($kind) {
-                'page' => new Page(...$common),
-                'product' => new Product(...$common),
-                default => new Post(...$common),
-            };
+            $entity = $kind === 'product'
+                ? new Product(...$common)
+                : new Post(...$common);
 
             yield $entity->toArray();
         }
@@ -290,6 +284,10 @@ final class BitrixAdapter extends AbstractPdoAdapter
     /** @return list<array{key: string, value: mixed, type: string}> */
     private function loadElementProperties(int $elementId): array
     {
+        if (!$this->tableExists('iblock_element_property')) {
+            return [];
+        }
+
         $sql = 'SELECT p.CODE, ep.VALUE
                 FROM ' . $this->table('iblock_element_property') . ' ep
                 JOIN ' . $this->table('iblock_property') . ' p ON p.ID = ep.IBLOCK_PROPERTY_ID
@@ -310,12 +308,19 @@ final class BitrixAdapter extends AbstractPdoAdapter
     }
 
     /** @return \Generator<int, array<string, mixed>> */
-    private function exportCategories(int $batchSize): \Generator
+    private function exportCategories(EntityKey $key, int $batchSize): \Generator
     {
+        $iblockId = $this->getDiscovery()->resolveSectionIblockId($key);
         $sql = 'SELECT ID, CODE, NAME, DESCRIPTION, IBLOCK_SECTION_ID, IBLOCK_ID
-                FROM ' . $this->table('iblock_section') . ' ORDER BY ID';
+                FROM ' . $this->table('iblock_section');
+        $params = [];
+        if ($iblockId !== null && $key->value !== 'categories') {
+            $sql .= ' WHERE IBLOCK_ID = :iblock';
+            $params['iblock'] = $iblockId;
+        }
+        $sql .= ' ORDER BY ID';
 
-        foreach ($this->batchedQuery($sql, $batchSize) as $row) {
+        foreach ($this->batchedQuery($sql, $batchSize, $params) as $row) {
             yield (new Category(
                 sourceId: (int) $row['ID'],
                 slug: (string) ($row['CODE'] ?: 'section-' . $row['ID']),
@@ -328,12 +333,13 @@ final class BitrixAdapter extends AbstractPdoAdapter
     }
 
     /** @param list<array<string, mixed>> $entities */
-    private function importElements(array $entities, EntityType $type, ImportContextInterface $context): ImportBatchResult
+    private function importElements(array $entities, EntityKey $key, ImportContextInterface $context): ImportBatchResult
     {
         $result = new ImportBatchResult();
-        $iblockId = $type === EntityType::Product
-            ? ($this->catalogIblockIds[0] ?? $this->newsIblockIds[0] ?? 1)
-            : ($this->newsIblockIds[0] ?? 1);
+        $iblockId = $this->getDiscovery()->resolveIblockId($key)
+            ?? $this->getDiscovery()->getContentIblockIds()[0]
+            ?? $this->getDiscovery()->getCatalogIblockIds()[0]
+            ?? 1;
         $pdo = $this->getPdo();
         $remapper = $context->getIdRemapper();
 
@@ -342,7 +348,8 @@ final class BitrixAdapter extends AbstractPdoAdapter
             $sectionId = 0;
             foreach ($entity['taxonomy_refs'] ?? [] as $ref) {
                 if (($ref['type'] ?? '') === 'category') {
-                    $resolved = $remapper->resolve(EntityType::Category, $ref['source_id']);
+                    $resolved = $remapper->resolve(EntityKey::fromStandard(EntityType::Category), $ref['source_id'])
+                        ?? $remapper->resolve(EntityKey::iblockSection($iblockId), $ref['source_id']);
                     if ($resolved !== null) {
                         $sectionId = (int) $resolved;
                     }
@@ -381,16 +388,20 @@ final class BitrixAdapter extends AbstractPdoAdapter
     }
 
     /** @param list<array<string, mixed>> $entities */
-    private function importCategories(array $entities, ImportContextInterface $context): ImportBatchResult
+    private function importCategories(array $entities, EntityKey $key, ImportContextInterface $context): ImportBatchResult
     {
         $result = new ImportBatchResult();
         $pdo = $this->getPdo();
-        $iblockId = $this->newsIblockIds[0] ?? $this->catalogIblockIds[0] ?? 1;
+        $iblockId = $this->getDiscovery()->resolveSectionIblockId($key)
+            ?? $this->getDiscovery()->getContentIblockIds()[0]
+            ?? $this->getDiscovery()->getCatalogIblockIds()[0]
+            ?? 1;
 
         foreach ($entities as $entity) {
             $parentId = 0;
             if (!empty($entity['parent_id'])) {
-                $resolved = $context->getIdRemapper()->resolve(EntityType::Category, $entity['parent_id']);
+                $resolved = $context->getIdRemapper()->resolve(EntityKey::fromStandard(EntityType::Category), $entity['parent_id'])
+                    ?? $context->getIdRemapper()->resolve(EntityKey::iblockSection($iblockId), $entity['parent_id']);
                 $parentId = $resolved !== null ? (int) $resolved : 0;
             }
 

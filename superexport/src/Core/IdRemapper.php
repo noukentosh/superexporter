@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace SuperExport\Core;
 
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\EntityType;
 
 /**
- * Tracks source_id => target_id pairs created during import, per entity type.
+ * Tracks source_id => target_id pairs created during import, per entity key.
  * Used to resolve parent_id, taxonomy_refs, relations and meta ownership.
  */
 final class IdRemapper
@@ -15,29 +16,41 @@ final class IdRemapper
     /** @var array<string, array<string, string|int>> */
     private array $map = [];
 
-    public function remember(EntityType $type, string|int $sourceId, string|int $targetId): void
+    public function remember(EntityKey $key, string|int $sourceId, string|int $targetId): void
     {
-        $this->map[$type->value][(string) $sourceId] = $targetId;
+        $this->map[$key->value][(string) $sourceId] = $targetId;
     }
 
-    public function resolve(EntityType $type, string|int $sourceId): string|int|null
+    public function resolve(EntityKey $key, string|int $sourceId): string|int|null
     {
-        return $this->map[$type->value][(string) $sourceId] ?? null;
+        return $this->map[$key->value][(string) $sourceId] ?? null;
     }
 
-    public function has(EntityType $type, string|int $sourceId): bool
+    public function has(EntityKey $key, string|int $sourceId): bool
     {
-        return isset($this->map[$type->value][(string) $sourceId]);
+        return isset($this->map[$key->value][(string) $sourceId]);
     }
 
     /**
      * @param array<string|int, string|int> $pairs
      */
-    public function rememberBatch(EntityType $type, array $pairs): void
+    public function rememberBatch(EntityKey $key, array $pairs): void
     {
         foreach ($pairs as $sourceId => $targetId) {
-            $this->remember($type, $sourceId, $targetId);
+            $this->remember($key, $sourceId, $targetId);
         }
+    }
+
+    /** Backward-compatible helper for standard entity types. */
+    public function rememberType(EntityType $type, string|int $sourceId, string|int $targetId): void
+    {
+        $this->remember(EntityKey::fromStandard($type), $sourceId, $targetId);
+    }
+
+    /** Backward-compatible helper for standard entity types. */
+    public function resolveType(EntityType $type, string|int $sourceId): string|int|null
+    {
+        return $this->resolve(EntityKey::fromStandard($type), $sourceId);
     }
 
     /**
@@ -66,12 +79,12 @@ final class IdRemapper
      */
     public function rememberBatchFromMap(array $map): void
     {
-        foreach ($map as $typeValue => $pairs) {
-            $type = EntityType::tryFrom($typeValue);
-            if ($type === null) {
+        foreach ($map as $keyValue => $pairs) {
+            $key = EntityKey::tryParse((string) $keyValue);
+            if ($key === null) {
                 continue;
             }
-            $this->rememberBatch($type, $pairs);
+            $this->rememberBatch($key, $pairs);
         }
     }
 }

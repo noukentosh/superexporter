@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SuperExport\Storage;
 
 use SuperExport\Exceptions\SuperExportException;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\Serializer;
 
 /**
@@ -20,15 +20,15 @@ final class JsonChunkReader
     }
 
     /**
-     * Iterate over all records of a type across the given chunk files.
+     * Iterate over all records of a key across the given chunk files.
      *
      * @param list<string> $chunkFiles Relative file names from the manifest.
      * @return \Generator<int, array<string, mixed>>
      */
-    public function read(EntityType $type, array $chunkFiles): \Generator
+    public function read(EntityKey $key, array $chunkFiles): \Generator
     {
         foreach ($chunkFiles as $fileName) {
-            foreach ($this->readChunk($type, $fileName) as $record) {
+            foreach ($this->readChunk($key, $fileName) as $record) {
                 yield $record;
             }
         }
@@ -37,15 +37,14 @@ final class JsonChunkReader
     /**
      * @return list<array<string, mixed>>
      */
-    public function readChunk(EntityType $type, string $fileName): array
+    public function readChunk(EntityKey $key, string $fileName): array
     {
-        // Chunk names come from the manifest; forbid path traversal.
         if (basename($fileName) !== $fileName) {
             throw new SuperExportException('Invalid chunk file name: ' . $fileName);
         }
 
         $path = $this->storagePath . DIRECTORY_SEPARATOR . 'entities'
-            . DIRECTORY_SEPARATOR . $type->value . DIRECTORY_SEPARATOR . $fileName;
+            . DIRECTORY_SEPARATOR . $key->storageKey() . DIRECTORY_SEPARATOR . $fileName;
 
         if (!is_file($path)) {
             throw new SuperExportException('Chunk file not found: ' . $path);

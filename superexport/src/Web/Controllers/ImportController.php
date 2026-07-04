@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace SuperExport\Web\Controllers;
 
 use SuperExport\Core\Engine;
+use SuperExport\Core\EntityMapper;
 use SuperExport\Exceptions\SuperExportException;
 use SuperExport\Storage\JsonChunkReader;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\Serializer;
 use SuperExport\Web\ProgressStream;
 use SuperExport\Web\View;
@@ -35,8 +36,7 @@ final class ImportController
     }
 
     /**
-     * Step 2: mapping wizard — canonical field -> target CMS field,
-     * pre-filled with the target adapter defaults.
+     * Step 2: mapping wizard — entity mapping + canonical field -> target CMS field.
      *
      * @param array<string, mixed> $post
      */
@@ -45,21 +45,22 @@ final class ImportController
         $input = $this->requireInputPath($post);
         $manifest = $this->engine->getManifestManager()->load($input);
         $adapter = $this->engine->detectCms();
+        $mapper = new EntityMapper();
 
         $available = $this->engine->getManifestManager()->getEntities($manifest);
-        $supported = $adapter->getSupportedEntities();
+        $sourceDefinitions = $this->engine->getManifestManager()->getEntityDefinitions($manifest);
+        $entityMapping = $mapper->buildMappingTable($available, $sourceDefinitions, $adapter);
 
-        $types = array_values(array_filter(
-            $available,
-            static fn (EntityType $t): bool => in_array($t, $supported, true)
-        ));
-        $unsupported = array_values(array_filter(
-            $available,
-            static fn (EntityType $t): bool => !in_array($t, $supported, true)
-        ));
+        $importable = [];
+        $unsupported = [];
+        foreach ($entityMapping as $sourceKey => $info) {
+            if ($info['target'] !== null) {
+                $importable[] = EntityKey::parse($sourceKey);
+            } else {
+                $unsupported[] = EntityKey::parse($sourceKey);
+            }
+        }
 
-        // Adapter map is "native field => canonical"; invert it to suggest
-        // a native target field for every canonical field.
         $defaults = [];
         foreach ($adapter->getFieldMap() as $native => $canonical) {
             $defaults[$canonical] ??= $native;
@@ -68,15 +69,22 @@ final class ImportController
         /** @var array<string, array<string, array{type: string, required: bool}>> $schemaFields */
         $schemaFields = (array) ($manifest['schema']['fields'] ?? []);
 
+        $supportedTargets = [];
+        foreach ($adapter->getSupportedEntities() as $targetKey) {
+            $supportedTargets[$targetKey->value] = $targetKey->value;
+        }
+
         return $this->view->render('import_mapping', 'Import — step 2 of 3', [
             'input' => $input,
             'manifest' => $manifest,
             'targetCms' => $adapter->getName(),
-            'types' => $types,
+            'types' => $importable,
             'unsupported' => $unsupported,
+            'entityMapping' => $entityMapping,
+            'supportedTargets' => $supportedTargets,
             'schemaFields' => $schemaFields,
             'defaults' => $defaults,
-            'preview' => $this->buildPreview($input, $manifest, $types),
+            'preview' => $this->buildPreview($input, $manifest, $importable),
         ]);
     }
 
@@ -92,6 +100,7 @@ final class ImportController
         $resume = !empty($post['resume']) && !$dryRun;
         $duplicates = (string) ($post['duplicates'] ?? 'skip');
         $overrides = $this->collectOverrides($post);
+        $entityMapping = $this->collectEntityMapping($post);
 
         $stream = new ProgressStream($this->view);
         $stream->start($dryRun ? 'Import — dry-run' : 'Import — running');
@@ -101,7 +110,7 @@ final class ImportController
         );
 
         try {
-            $report = $this->engine->import($input, $dryRun, $duplicates, $overrides, $resume);
+            $report = $this->engine->import($input, $dryRun, $duplicates, $overrides, $resume, $entityMapping);
         } catch (SuperExportException $e) {
             $stream->line('ERROR: ' . $e->getMessage());
             $stream->finish($this->view->renderPartial('operation_failed', [
@@ -138,8 +147,6 @@ final class ImportController
     }
 
     /**
-     * Extract non-empty mapping overrides: map[<entity>][<canonical>] = target field.
-     *
      * @param array<string, mixed> $post
      * @return array<string, array<string, string>>
      */
@@ -152,7 +159,7 @@ final class ImportController
         }
 
         foreach ($map as $typeName => $fields) {
-            if (EntityType::tryFrom((string) $typeName) === null || !is_array($fields)) {
+            if (EntityKey::tryParse((string) $typeName) === null || !is_array($fields)) {
                 continue;
             }
             foreach ($fields as $canonical => $target) {
@@ -167,10 +174,31 @@ final class ImportController
     }
 
     /**
-     * First records of every importable type for the mapping screen.
-     *
+     * @param array<string, mixed> $post
+     * @return array<string, string>
+     */
+    private function collectEntityMapping(array $post): array
+    {
+        $mapping = [];
+        $raw = $post['entity_map'] ?? [];
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        foreach ($raw as $source => $target) {
+            $source = trim((string) $source);
+            $target = trim((string) $target);
+            if ($source !== '' && $target !== '') {
+                $mapping[$source] = $target;
+            }
+        }
+
+        return $mapping;
+    }
+
+    /**
      * @param array<string, mixed> $manifest
-     * @param list<EntityType> $types
+     * @param list<EntityKey> $types
      * @return array<string, list<array<string, mixed>>>
      */
     private function buildPreview(string $input, array $manifest, array $types): array
@@ -178,19 +206,19 @@ final class ImportController
         $reader = new JsonChunkReader($input, new Serializer());
         $preview = [];
 
-        foreach ($types as $type) {
-            $chunks = $this->engine->getManifestManager()->getChunks($manifest, $type);
+        foreach ($types as $key) {
+            $chunks = $this->engine->getManifestManager()->getChunks($manifest, $key);
             if ($chunks === []) {
                 continue;
             }
 
             try {
-                $records = $reader->readChunk($type, $chunks[0]);
+                $records = $reader->readChunk($key, $chunks[0]);
             } catch (SuperExportException) {
                 continue;
             }
 
-            $preview[$type->value] = array_slice($records, 0, self::PREVIEW_RECORDS);
+            $preview[$key->value] = array_slice($records, 0, self::PREVIEW_RECORDS);
         }
 
         return $preview;

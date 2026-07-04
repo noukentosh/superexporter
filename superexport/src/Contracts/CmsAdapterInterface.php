@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace SuperExport\Contracts;
 
-use SuperExport\Universal\EntityType;
+use SuperExport\Core\IdRemapper;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 
 /**
  * Contract every CMS adapter must implement.
@@ -43,27 +45,33 @@ interface CmsAdapterInterface
     public function getDbPrefix(): ?string;
 
     /**
-     * Entity types this adapter can export/import for the current installation
-     * (e.g. products only when a commerce module is present).
+     * Entity keys this adapter can export/import for the current installation.
      *
-     * @return list<EntityType>
+     * @return list<EntityKey>
      */
     public function getSupportedEntities(): array;
 
     /**
-     * Total number of records of the given type (used for progress/stats).
+     * Metadata for each supported entity (labels, canonical kind, native source info).
+     *
+     * @return array<string, EntityDefinition> keyed by EntityKey->value
      */
-    public function countEntities(EntityType $type): int;
+    public function getEntityDefinitions(): array;
 
     /**
-     * Read entities of the given type in batches.
+     * Total number of records of the given key (used for progress/stats).
+     */
+    public function countEntities(EntityKey $key): int;
+
+    /**
+     * Read entities of the given key in batches.
      *
      * Each yielded item must be a canonical-format associative array as
      * described by SchemaRegistry.
      *
      * @return \Generator<int, array<string, mixed>>
      */
-    public function exportEntities(EntityType $type, int $batchSize): \Generator;
+    public function exportEntities(EntityKey $key, int $batchSize): \Generator;
 
     /**
      * Default mapping "source field => canonical field" for the manifest
@@ -81,5 +89,5 @@ interface CmsAdapterInterface
      *
      * @return ImportBatchResult Per-batch outcome (created/skipped/errors + new id pairs).
      */
-    public function importEntities(EntityType $type, array $entities, ImportContextInterface $context): ImportBatchResult;
+    public function importEntities(EntityKey $key, array $entities, ImportContextInterface $context): ImportBatchResult;
 }

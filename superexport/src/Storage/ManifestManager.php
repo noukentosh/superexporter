@@ -6,7 +6,8 @@ namespace SuperExport\Storage;
 
 use SuperExport\Exceptions\IncompatibleFormatException;
 use SuperExport\Exceptions\SuperExportException;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\SchemaRegistry;
 use SuperExport\Universal\Serializer;
 
@@ -16,7 +17,7 @@ use SuperExport\Universal\Serializer;
  */
 final class ManifestManager
 {
-    public const FORMAT_VERSION = '1.0.0';
+    public const FORMAT_VERSION = '1.1.0';
     private const MANIFEST_FILE = 'manifest.json';
 
     public function __construct(
@@ -27,10 +28,11 @@ final class ManifestManager
 
     /**
      * @param array{cms: string, cms_version: ?string, site_url: ?string, db_prefix: ?string} $source
-     * @param list<EntityType>              $entities
-     * @param array<string, int>            $stats
-     * @param array<string, string>         $sourceFieldMap
-     * @param array<string, list<string>>   $chunks
+     * @param list<EntityKey>              $entities
+     * @param array<string, int>           $stats
+     * @param array<string, string>        $sourceFieldMap
+     * @param array<string, list<string>>  $chunks
+     * @param array<string, EntityDefinition> $entityDefinitions
      * @return array<string, mixed>
      */
     public function build(
@@ -39,14 +41,21 @@ final class ManifestManager
         array $stats,
         array $sourceFieldMap,
         array $chunks,
+        array $entityDefinitions = [],
     ): array {
+        $definitionsPayload = [];
+        foreach ($entityDefinitions as $key => $definition) {
+            $definitionsPayload[$key instanceof EntityKey ? $key->value : (string) $key] = $definition->toArray();
+        }
+
         return [
             'format_version' => self::FORMAT_VERSION,
             'exported_at' => gmdate('Y-m-d\TH:i:s\Z'),
             'source' => $source,
             'schema' => [
-                'entities' => array_map(static fn (EntityType $t): string => $t->value, $entities),
+                'entities' => array_map(static fn (EntityKey $k): string => $k->value, $entities),
                 'fields' => $this->schemaRegistry->describe($entities),
+                'entity_definitions' => $definitionsPayload,
             ],
             'stats' => $stats,
             'source_field_map' => $sourceFieldMap,
@@ -91,10 +100,10 @@ final class ManifestManager
     }
 
     /**
-     * Entity types listed in the manifest.
+     * Entity keys listed in the manifest.
      *
      * @param array<string, mixed> $manifest
-     * @return list<EntityType>
+     * @return list<EntityKey>
      */
     public function getEntities(array $manifest): array
     {
@@ -103,27 +112,60 @@ final class ManifestManager
             throw new SuperExportException('Manifest schema.entities is malformed.');
         }
 
-        $types = [];
+        $keys = [];
         foreach ($names as $name) {
-            $type = EntityType::tryFrom((string) $name);
-            if ($type === null) {
+            $key = EntityKey::tryParse((string) $name);
+            if ($key === null) {
                 throw new SuperExportException('Manifest references unknown entity type: ' . $name);
             }
-            $types[] = $type;
+            $keys[] = $key;
         }
 
-        return $types;
+        return $keys;
     }
 
     /**
-     * Chunk file names for one entity type.
+     * Entity definitions from manifest (falls back to standard definitions for 1.0.x).
+     *
+     * @param array<string, mixed> $manifest
+     * @return array<string, EntityDefinition>
+     */
+    public function getEntityDefinitions(array $manifest): array
+    {
+        $raw = $manifest['schema']['entity_definitions'] ?? [];
+        if (is_array($raw) && $raw !== []) {
+            $definitions = [];
+            foreach ($raw as $keyValue => $data) {
+                $key = EntityKey::tryParse((string) $keyValue);
+                if ($key === null || !is_array($data)) {
+                    continue;
+                }
+                $definitions[$key->value] = EntityDefinition::fromArray($key, $data);
+            }
+
+            return $definitions;
+        }
+
+        $definitions = [];
+        foreach ($this->getEntities($manifest) as $key) {
+            $standard = $key->toStandardType();
+            if ($standard !== null) {
+                $definitions[$key->value] = EntityDefinition::forStandard($standard);
+            }
+        }
+
+        return $definitions;
+    }
+
+    /**
+     * Chunk file names for one entity key.
      *
      * @param array<string, mixed> $manifest
      * @return list<string>
      */
-    public function getChunks(array $manifest, EntityType $type): array
+    public function getChunks(array $manifest, EntityKey $key): array
     {
-        $chunks = $manifest['chunks'][$type->value] ?? [];
+        $chunks = $manifest['chunks'][$key->value] ?? [];
 
         return is_array($chunks) ? array_values($chunks) : [];
     }

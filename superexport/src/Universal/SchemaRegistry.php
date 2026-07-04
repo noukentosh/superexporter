@@ -50,26 +50,43 @@ final class SchemaRegistry
     /**
      * @return array<string, array{type: string, required: bool}>
      */
-    public function getFields(EntityType $type): array
+    public function getFields(EntityKey $key): array
     {
-        return match (true) {
-            $type->isContent()       => self::CONTENT_FIELDS,
-            $type->isTaxonomy()      => self::TAXONOMY_FIELDS,
-            $type === EntityType::Meta => self::META_FIELDS,
-        };
+        $standard = $key->toStandardType();
+        if ($standard === EntityType::Meta) {
+            return self::META_FIELDS;
+        }
+
+        if ($key->isContent()) {
+            return self::CONTENT_FIELDS;
+        }
+
+        if ($key->isTaxonomy()) {
+            return self::TAXONOMY_FIELDS;
+        }
+
+        return self::CONTENT_FIELDS;
     }
 
     /**
-     * Schema description for all given entity types (manifest "schema.fields").
+     * @return array<string, array{type: string, required: bool}>
+     */
+    public function getFieldsForType(EntityType $type): array
+    {
+        return $this->getFields(EntityKey::fromStandard($type));
+    }
+
+    /**
+     * Schema description for all given entity keys (manifest "schema.fields").
      *
-     * @param list<EntityType> $types
+     * @param list<EntityKey> $keys
      * @return array<string, array<string, array{type: string, required: bool}>>
      */
-    public function describe(array $types): array
+    public function describe(array $keys): array
     {
         $out = [];
-        foreach ($types as $type) {
-            $out[$type->value] = $this->getFields($type);
+        foreach ($keys as $key) {
+            $out[$key->value] = $this->getFields($key);
         }
 
         return $out;
@@ -81,12 +98,12 @@ final class SchemaRegistry
      * @param array<string, mixed> $record
      * @return list<string>
      */
-    public function validate(EntityType $type, array $record): array
+    public function validate(EntityKey $key, array $record): array
     {
         $errors = [];
-        foreach ($this->getFields($type) as $field => $def) {
+        foreach ($this->getFields($key) as $field => $def) {
             if ($def['required'] && (!array_key_exists($field, $record) || $record[$field] === null || $record[$field] === '')) {
-                $errors[] = sprintf('%s: missing required field "%s"', $type->value, $field);
+                $errors[] = sprintf('%s: missing required field "%s"', $key->value, $field);
             }
         }
 

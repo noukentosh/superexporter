@@ -112,9 +112,16 @@ final class Engine
         string $duplicateStrategy = 'skip',
         array $fieldOverrides = [],
         bool $resume = false,
+        array $entityMappingOverrides = [],
     ): array {
         $adapter = $this->detectCms();
-        $context = new ImportContext(new IdRemapper(), $dryRun, $duplicateStrategy, $fieldOverrides);
+        $context = new ImportContext(
+            new IdRemapper(),
+            $dryRun,
+            $duplicateStrategy,
+            $fieldOverrides,
+            $entityMappingOverrides,
+        );
 
         $pipeline = new ImportPipeline(
             $this->manifestManager,

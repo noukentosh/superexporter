@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace SuperExport\Storage;
 
 use SuperExport\Exceptions\SuperExportException;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\Serializer;
 
 /**
  * Writes canonical entities into paginated chunk files:
- * storage/entities/posts/posts_0001.json, posts_0002.json, ...
+ * storage/entities/posts/posts_0001.json, entities/cpt:portfolio/cpt:portfolio_0001.json, ...
  */
 final class JsonChunkWriter
 {
@@ -36,43 +36,43 @@ final class JsonChunkWriter
     /**
      * @param array<string, mixed> $record
      */
-    public function write(EntityType $type, array $record): void
+    public function write(EntityKey $key, array $record): void
     {
-        $this->buffers[$type->value][] = $record;
+        $this->buffers[$key->value][] = $record;
 
-        if (count($this->buffers[$type->value]) >= $this->chunkSize) {
-            $this->flushType($type);
+        if (count($this->buffers[$key->value]) >= $this->chunkSize) {
+            $this->flushType($key);
         }
     }
 
     /**
      * Flush all pending buffers and return the chunk file map for the manifest.
      *
-     * @return array<string, list<string>> entity type => relative chunk file names
+     * @return array<string, list<string>> entity key => relative chunk file names
      */
     public function finalize(): array
     {
-        foreach (array_keys($this->buffers) as $typeValue) {
-            $type = EntityType::from($typeValue);
-            if ($this->buffers[$typeValue] !== []) {
-                $this->flushType($type);
+        foreach (array_keys($this->buffers) as $keyValue) {
+            $key = EntityKey::parse($keyValue);
+            if ($this->buffers[$keyValue] !== []) {
+                $this->flushType($key);
             }
         }
 
         return $this->writtenChunks;
     }
 
-    private function flushType(EntityType $type): void
+    private function flushType(EntityKey $key): void
     {
-        $records = $this->buffers[$type->value] ?? [];
+        $records = $this->buffers[$key->value] ?? [];
         if ($records === []) {
             return;
         }
 
-        $this->chunkCounters[$type->value] = ($this->chunkCounters[$type->value] ?? 0) + 1;
-        $fileName = sprintf('%s_%04d.json', $type->value, $this->chunkCounters[$type->value]);
+        $this->chunkCounters[$key->value] = ($this->chunkCounters[$key->value] ?? 0) + 1;
+        $fileName = sprintf('%s_%04d.json', $key->storageKey(), $this->chunkCounters[$key->value]);
 
-        $dir = $this->storagePath . DIRECTORY_SEPARATOR . 'entities' . DIRECTORY_SEPARATOR . $type->value;
+        $dir = $this->storagePath . DIRECTORY_SEPARATOR . 'entities' . DIRECTORY_SEPARATOR . $key->storageKey();
         $this->ensureDir($dir);
 
         $path = $dir . DIRECTORY_SEPARATOR . $fileName;
@@ -80,8 +80,8 @@ final class JsonChunkWriter
             throw new SuperExportException('Cannot write chunk file: ' . $path);
         }
 
-        $this->writtenChunks[$type->value][] = $fileName;
-        $this->buffers[$type->value] = [];
+        $this->writtenChunks[$key->value][] = $fileName;
+        $this->buffers[$key->value] = [];
     }
 
     private function ensureDir(string $dir): void

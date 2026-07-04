@@ -6,15 +6,19 @@ namespace SuperExport\Adapters\OpenCart;
 
 use PDO;
 use SuperExport\Adapters\AbstractPdoAdapter;
+use SuperExport\Adapters\StandardEntitySupport;
 use SuperExport\Contracts\ImportBatchResult;
 use SuperExport\Contracts\ImportContextInterface;
 use SuperExport\Exceptions\SuperExportException;
 use SuperExport\Universal\Entity\Category;
 use SuperExport\Universal\Entity\Product;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\EntityType;
 
 final class OpenCartAdapter extends AbstractPdoAdapter
 {
+    use StandardEntitySupport;
     private int $languageId = 1;
 
     public function getName(): string
@@ -91,14 +95,25 @@ final class OpenCartAdapter extends AbstractPdoAdapter
         ) ?: 1;
     }
 
-    /** @return list<EntityType> */
+    /** @return list<EntityKey> */
     public function getSupportedEntities(): array
     {
-        return [EntityType::Category, EntityType::Product];
+        return $this->keysFromTypes([EntityType::Category, EntityType::Product]);
     }
 
-    public function countEntities(EntityType $type): int
+    /** @return array<string, EntityDefinition> */
+    public function getEntityDefinitions(): array
     {
+        return $this->definitionsFromTypes([EntityType::Category, EntityType::Product]);
+    }
+
+    public function countEntities(EntityKey $key): int
+    {
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return 0;
+        }
+
         return match ($type) {
             EntityType::Product => $this->scalarCount('SELECT COUNT(*) FROM ' . $this->table('product')),
             EntityType::Category => $this->scalarCount('SELECT COUNT(*) FROM ' . $this->table('category')),
@@ -106,8 +121,13 @@ final class OpenCartAdapter extends AbstractPdoAdapter
         };
     }
 
-    public function exportEntities(EntityType $type, int $batchSize): \Generator
+    public function exportEntities(EntityKey $key, int $batchSize): \Generator
     {
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return $this->emptyGenerator();
+        }
+
         return match ($type) {
             EntityType::Product => $this->exportProducts($batchSize),
             EntityType::Category => $this->exportCategories($batchSize),
@@ -125,10 +145,15 @@ final class OpenCartAdapter extends AbstractPdoAdapter
         ];
     }
 
-    public function importEntities(EntityType $type, array $entities, ImportContextInterface $context): ImportBatchResult
+    public function importEntities(EntityKey $key, array $entities, ImportContextInterface $context): ImportBatchResult
     {
         if ($context->isDryRun()) {
             return $this->dryRunResult($entities);
+        }
+
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return new ImportBatchResult();
         }
 
         return match ($type) {
@@ -240,7 +265,7 @@ final class OpenCartAdapter extends AbstractPdoAdapter
             ]);
 
             foreach ($entity['taxonomy_refs'] ?? [] as $ref) {
-                $catId = $context->getIdRemapper()->resolve(EntityType::Category, $ref['source_id']);
+                $catId = $context->getIdRemapper()->resolve(EntityKey::fromStandard(EntityType::Category), $ref['source_id']);
                 if ($catId !== null) {
                     $pdo->prepare(
                         'INSERT INTO ' . $this->table('product_to_category') . ' (product_id, category_id) VALUES (:p, :c)',
@@ -266,7 +291,7 @@ final class OpenCartAdapter extends AbstractPdoAdapter
         foreach ($entities as $entity) {
             $parentId = 0;
             if (!empty($entity['parent_id'])) {
-                $resolved = $context->getIdRemapper()->resolve(EntityType::Category, $entity['parent_id']);
+                $resolved = $context->getIdRemapper()->resolve(EntityKey::fromStandard(EntityType::Category), $entity['parent_id']);
                 $parentId = $resolved !== null ? (int) $resolved : 0;
             }
 

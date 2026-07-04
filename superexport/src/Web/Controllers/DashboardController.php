@@ -7,7 +7,7 @@ namespace SuperExport\Web\Controllers;
 use SuperExport\Core\Engine;
 use SuperExport\Exceptions\CmsNotDetectedException;
 use SuperExport\Exceptions\SuperExportException;
-use SuperExport\Universal\EntityType;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Web\View;
 
 /**
@@ -34,7 +34,7 @@ final class DashboardController
                 'site_url' => $adapter->getSiteUrl() ?? 'unknown',
                 'db_prefix' => $adapter->getDbPrefix() ?? 'unknown',
                 'entities' => array_map(
-                    static fn (EntityType $t): string => $t->value,
+                    static fn (EntityKey $k): string => $k->value,
                     $adapter->getSupportedEntities()
                 ),
             ];

@@ -6,6 +6,7 @@ namespace SuperExport\Adapters\Drupal;
 
 use PDO;
 use SuperExport\Adapters\AbstractPdoAdapter;
+use SuperExport\Adapters\StandardEntitySupport;
 use SuperExport\Contracts\ImportBatchResult;
 use SuperExport\Contracts\ImportContextInterface;
 use SuperExport\Exceptions\SuperExportException;
@@ -13,10 +14,13 @@ use SuperExport\Universal\Entity\Category;
 use SuperExport\Universal\Entity\Page;
 use SuperExport\Universal\Entity\Post;
 use SuperExport\Universal\Entity\Product;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\EntityType;
 
 final class DrupalAdapter extends AbstractPdoAdapter
 {
+    use StandardEntitySupport;
     private bool $hasCommerce = false;
 
     public function getName(): string
@@ -97,19 +101,35 @@ final class DrupalAdapter extends AbstractPdoAdapter
         $this->hasCommerce = $this->tableExists('commerce_product_field_data');
     }
 
-    /** @return list<EntityType> */
+    /** @return list<EntityKey> */
     public function getSupportedEntities(): array
     {
-        $entities = [EntityType::Category, EntityType::Post, EntityType::Page];
+        $types = [EntityType::Category, EntityType::Post, EntityType::Page];
         if ($this->hasCommerce) {
-            $entities[] = EntityType::Product;
+            $types[] = EntityType::Product;
         }
 
-        return $entities;
+        return $this->keysFromTypes($types);
     }
 
-    public function countEntities(EntityType $type): int
+    /** @return array<string, EntityDefinition> */
+    public function getEntityDefinitions(): array
     {
+        $types = [EntityType::Category, EntityType::Post, EntityType::Page];
+        if ($this->hasCommerce) {
+            $types[] = EntityType::Product;
+        }
+
+        return $this->definitionsFromTypes($types);
+    }
+
+    public function countEntities(EntityKey $key): int
+    {
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return 0;
+        }
+
         return match ($type) {
             EntityType::Post => $this->scalarCount(
                 'SELECT COUNT(*) FROM ' . $this->table('node_field_data') . " WHERE type = 'article' AND status = 1",
@@ -127,8 +147,13 @@ final class DrupalAdapter extends AbstractPdoAdapter
         };
     }
 
-    public function exportEntities(EntityType $type, int $batchSize): \Generator
+    public function exportEntities(EntityKey $key, int $batchSize): \Generator
     {
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return $this->emptyGenerator();
+        }
+
         return match ($type) {
             EntityType::Post => $this->exportNodes('article', $batchSize),
             EntityType::Page => $this->exportNodes('page', $batchSize),
@@ -149,10 +174,15 @@ final class DrupalAdapter extends AbstractPdoAdapter
         ];
     }
 
-    public function importEntities(EntityType $type, array $entities, ImportContextInterface $context): ImportBatchResult
+    public function importEntities(EntityKey $key, array $entities, ImportContextInterface $context): ImportBatchResult
     {
         if ($context->isDryRun()) {
             return $this->dryRunResult($entities);
+        }
+
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return new ImportBatchResult();
         }
 
         return match ($type) {

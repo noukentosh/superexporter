@@ -4,8 +4,10 @@
 /** @var string $input */
 /** @var array<string, mixed> $manifest */
 /** @var string $targetCms */
-/** @var list<SuperExport\Universal\EntityType> $types */
-/** @var list<SuperExport\Universal\EntityType> $unsupported */
+/** @var list<SuperExport\Universal\EntityKey> $types */
+/** @var list<SuperExport\Universal\EntityKey> $unsupported */
+/** @var array<string, array{target: ?SuperExport\Universal\EntityKey, label: string, canonical_kind: string}> $entityMapping */
+/** @var array<string, string> $supportedTargets */
 /** @var array<string, array<string, array{type: string, required: bool}>> $schemaFields */
 /** @var array<string, string> $defaults */
 /** @var array<string, list<array<string, mixed>>> $preview */
@@ -31,9 +33,9 @@ $stats = (array) ($manifest['stats'] ?? []);
     </td></tr>
   </table>
   <?php if ($unsupported !== []): ?>
-    <p class="muted" style="margin-bottom:0">Not supported by <?= View::e($targetCms) ?> and will be skipped:
-      <?php foreach ($unsupported as $type): ?>
-        <span class="badge"><?= View::e($type->value) ?></span>
+    <p class="muted" style="margin-bottom:0">No automatic target mapping — will be skipped unless you map manually below:
+      <?php foreach ($unsupported as $key): ?>
+        <span class="badge"><?= View::e($key->value) ?></span>
       <?php endforeach; ?>
     </p>
   <?php endif; ?>
@@ -43,21 +45,51 @@ $stats = (array) ($manifest['stats'] ?? []);
   <input type="hidden" name="input" value="<?= View::e($input) ?>">
 
   <div class="card">
+    <h2 style="margin-top:0">Entity mapping</h2>
+    <p class="muted">Source entity types are mapped to the closest target entity for cross-CMS import. Override when needed.</p>
+    <table>
+      <tr>
+        <th>Source entity</th>
+        <th>Label</th>
+        <th>Canonical kind</th>
+        <th>Target entity (<?= View::e($targetCms) ?>)</th>
+      </tr>
+      <?php foreach ($entityMapping as $sourceKey => $info): ?>
+        <tr>
+          <td><code><?= View::e($sourceKey) ?></code></td>
+          <td><?= View::e($info['label']) ?></td>
+          <td class="muted"><?= View::e($info['canonical_kind']) ?></td>
+          <td>
+            <select name="entity_map[<?= View::e($sourceKey) ?>]">
+              <option value="">— skip —</option>
+              <?php foreach ($supportedTargets as $targetValue => $targetLabel): ?>
+                <option value="<?= View::e($targetValue) ?>"<?= ($info['target']?->value ?? '') === $targetValue ? ' selected' : '' ?>>
+                  <?= View::e($targetLabel) ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+    </table>
+  </div>
+
+  <div class="card">
     <h2 style="margin-top:0">Field mapping</h2>
     <p class="muted">Leave a target field empty to use the adapter default. Overrides are saved to <code>import_map.json</code> after a real import.</p>
 
-    <?php foreach ($types as $type): ?>
-      <h2><?= View::e($type->value) ?></h2>
+    <?php foreach ($types as $key): ?>
+      <h2><?= View::e($key->value) ?></h2>
       <table>
         <tr><th style="width:30%">Canonical field</th><th style="width:15%">Type</th><th style="width:15%">Required</th><th>Target field (<?= View::e($targetCms) ?>)</th></tr>
-        <?php foreach (($schemaFields[$type->value] ?? []) as $field => $def): ?>
+        <?php foreach (($schemaFields[$key->value] ?? []) as $field => $def): ?>
           <tr>
             <td><code><?= View::e($field) ?></code></td>
             <td class="muted"><?= View::e($def['type'] ?? '') ?></td>
             <td><?= !empty($def['required']) ? 'yes' : '<span class="muted">no</span>' ?></td>
             <td>
               <input class="map" type="text"
-                     name="map[<?= View::e($type->value) ?>][<?= View::e($field) ?>]"
+                     name="map[<?= View::e($key->value) ?>][<?= View::e($field) ?>]"
                      value=""
                      placeholder="<?= View::e($defaults[$field] ?? 'adapter default') ?>">
             </td>
@@ -65,11 +97,11 @@ $stats = (array) ($manifest['stats'] ?? []);
         <?php endforeach; ?>
       </table>
 
-      <?php if (!empty($preview[$type->value])): ?>
+      <?php if (!empty($preview[$key->value])): ?>
         <details style="margin:8px 0 16px">
-          <summary class="muted">Preview first <?= count($preview[$type->value]) ?> record(s)</summary>
+          <summary class="muted">Preview first <?= count($preview[$key->value]) ?> record(s)</summary>
           <pre class="log" style="max-height:240px"><?php
-            foreach ($preview[$type->value] as $record) {
+            foreach ($preview[$key->value] as $record) {
                 echo View::e((string) json_encode($record, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)) . "\n";
             }
           ?></pre>

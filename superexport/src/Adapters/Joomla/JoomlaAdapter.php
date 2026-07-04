@@ -6,16 +6,20 @@ namespace SuperExport\Adapters\Joomla;
 
 use PDO;
 use SuperExport\Adapters\AbstractPdoAdapter;
+use SuperExport\Adapters\StandardEntitySupport;
 use SuperExport\Contracts\ImportBatchResult;
 use SuperExport\Contracts\ImportContextInterface;
 use SuperExport\Exceptions\SuperExportException;
 use SuperExport\Universal\Entity\Category;
 use SuperExport\Universal\Entity\Page;
 use SuperExport\Universal\Entity\Post;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\EntityType;
 
 final class JoomlaAdapter extends AbstractPdoAdapter
 {
+    use StandardEntitySupport;
     public function getName(): string
     {
         return 'joomla';
@@ -85,14 +89,25 @@ final class JoomlaAdapter extends AbstractPdoAdapter
         return null;
     }
 
-    /** @return list<EntityType> */
+    /** @return list<EntityKey> */
     public function getSupportedEntities(): array
     {
-        return [EntityType::Category, EntityType::Post, EntityType::Page];
+        return $this->keysFromTypes([EntityType::Category, EntityType::Post, EntityType::Page]);
     }
 
-    public function countEntities(EntityType $type): int
+    /** @return array<string, EntityDefinition> */
+    public function getEntityDefinitions(): array
     {
+        return $this->definitionsFromTypes([EntityType::Category, EntityType::Post, EntityType::Page]);
+    }
+
+    public function countEntities(EntityKey $key): int
+    {
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return 0;
+        }
+
         return match ($type) {
             EntityType::Post => $this->scalarCount(
                 'SELECT COUNT(*) FROM ' . $this->table('content') . ' WHERE state >= 0',
@@ -105,8 +120,13 @@ final class JoomlaAdapter extends AbstractPdoAdapter
         };
     }
 
-    public function exportEntities(EntityType $type, int $batchSize): \Generator
+    public function exportEntities(EntityKey $key, int $batchSize): \Generator
     {
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return $this->emptyGenerator();
+        }
+
         return match ($type) {
             EntityType::Post => $this->exportContent('post', $batchSize),
             EntityType::Page => $this->exportContent('page', $batchSize),
@@ -127,10 +147,15 @@ final class JoomlaAdapter extends AbstractPdoAdapter
         ];
     }
 
-    public function importEntities(EntityType $type, array $entities, ImportContextInterface $context): ImportBatchResult
+    public function importEntities(EntityKey $key, array $entities, ImportContextInterface $context): ImportBatchResult
     {
         if ($context->isDryRun()) {
             return $this->dryRunResult($entities);
+        }
+
+        $type = $this->toStandardType($key);
+        if ($type === null) {
+            return new ImportBatchResult();
         }
 
         return match ($type) {
@@ -204,7 +229,7 @@ final class JoomlaAdapter extends AbstractPdoAdapter
         foreach ($entities as $entity) {
             $catId = 0;
             foreach ($entity['taxonomy_refs'] ?? [] as $ref) {
-                $resolved = $context->getIdRemapper()->resolve(EntityType::Category, $ref['source_id']);
+                $resolved = $context->getIdRemapper()->resolve(EntityKey::fromStandard(EntityType::Category), $ref['source_id']);
                 if ($resolved !== null) {
                     $catId = (int) $resolved;
                 }
@@ -249,7 +274,7 @@ final class JoomlaAdapter extends AbstractPdoAdapter
         foreach ($entities as $entity) {
             $parentId = 0;
             if (!empty($entity['parent_id'])) {
-                $resolved = $context->getIdRemapper()->resolve(EntityType::Category, $entity['parent_id']);
+                $resolved = $context->getIdRemapper()->resolve(EntityKey::fromStandard(EntityType::Category), $entity['parent_id']);
                 $parentId = $resolved !== null ? (int) $resolved : 0;
             }
 

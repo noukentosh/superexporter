@@ -76,6 +76,8 @@ final class WordPressSchema
         $pdo->exec("INSERT INTO {$prefix}users (user_login, display_name) VALUES ('admin', 'Admin')");
         $pdo->exec("INSERT INTO {$prefix}posts (post_title, post_name, post_content, post_status, post_type, post_date, post_modified)
             VALUES ('Hello World', 'hello-world', '<p>Content</p>', 'publish', 'post', datetime('now'), datetime('now'))");
+        $pdo->exec("INSERT INTO {$prefix}posts (post_title, post_name, post_content, post_status, post_type, post_date, post_modified)
+            VALUES ('Portfolio Item', 'portfolio-item', '<p>Portfolio</p>', 'publish', 'portfolio', datetime('now'), datetime('now'))");
         $pdo->exec("INSERT INTO {$prefix}terms (name, slug) VALUES ('News', 'news')");
         $pdo->exec("INSERT INTO {$prefix}term_taxonomy (term_id, taxonomy, description, parent) VALUES (1, 'category', 'News cat', 0)");
     }

@@ -14,11 +14,21 @@ use SuperExport\Universal\Entity\Page;
 use SuperExport\Universal\Entity\Post;
 use SuperExport\Universal\Entity\Product;
 use SuperExport\Universal\Entity\Tag;
+use SuperExport\Universal\EntityDefinition;
+use SuperExport\Universal\EntityKey;
 use SuperExport\Universal\EntityType;
 
 final class WordPressAdapter extends AbstractPdoAdapter
 {
     private bool $hasWooCommerce = false;
+
+    /** @var array<string, EntityDefinition> */
+    private array $entityDefinitions = [];
+
+    /** @var list<EntityKey> */
+    private array $entityKeys = [];
+
+    private ?WpEntityDiscovery $discovery = null;
 
     public function getName(): string
     {
@@ -107,51 +117,85 @@ final class WordPressAdapter extends AbstractPdoAdapter
             && $this->scalarCount(
                 'SELECT COUNT(*) FROM ' . $this->table('posts') . " WHERE post_type = 'product'",
             ) > 0;
+
+        $this->refreshDiscovery();
     }
 
-  /** @return list<EntityType> */
-    public function getSupportedEntities(): array
+    private function refreshDiscovery(): void
     {
-        $entities = [EntityType::Category, EntityType::Tag, EntityType::Post, EntityType::Page];
-        if ($this->hasWooCommerce) {
-            $entities[] = EntityType::Product;
+        $this->discovery = new WpEntityDiscovery(
+            $this->getPdo(),
+            $this->dbPrefix ?? 'wp_',
+            $this->hasWooCommerce,
+        );
+        $this->entityDefinitions = $this->discovery->discoverDefinitions();
+        $this->entityKeys = $this->discovery->discoverEntityKeys();
+    }
+
+    private function getDiscovery(): WpEntityDiscovery
+    {
+        if ($this->discovery === null) {
+            $this->refreshDiscovery();
         }
 
-        return $entities;
+        return $this->discovery;
     }
 
-    public function countEntities(EntityType $type): int
+    /** @return list<EntityKey> */
+    public function getSupportedEntities(): array
     {
-        return match ($type) {
-            EntityType::Post => $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('posts') . " WHERE post_type = 'post' AND post_status != 'auto-draft'",
-            ),
-            EntityType::Page => $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('posts') . " WHERE post_type = 'page' AND post_status != 'auto-draft'",
-            ),
-            EntityType::Product => $this->hasWooCommerce ? $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('posts') . " WHERE post_type = 'product'",
-            ) : 0,
-            EntityType::Category => $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('term_taxonomy') . " WHERE taxonomy = 'category'",
-            ),
-            EntityType::Tag => $this->scalarCount(
-                'SELECT COUNT(*) FROM ' . $this->table('term_taxonomy') . " WHERE taxonomy = 'post_tag'",
-            ),
-            EntityType::Meta => 0,
-        };
+        if ($this->entityKeys === []) {
+            $this->refreshDiscovery();
+        }
+
+        return $this->entityKeys;
     }
 
-    public function exportEntities(EntityType $type, int $batchSize): \Generator
+    /** @return array<string, EntityDefinition> */
+    public function getEntityDefinitions(): array
     {
-        return match ($type) {
-            EntityType::Post => $this->exportPosts('post', $batchSize),
-            EntityType::Page => $this->exportPosts('page', $batchSize),
-            EntityType::Product => $this->exportPosts('product', $batchSize),
-            EntityType::Category => $this->exportTaxonomy('category', $batchSize),
-            EntityType::Tag => $this->exportTaxonomy('post_tag', $batchSize),
-            EntityType::Meta => $this->emptyGenerator(),
-        };
+        if ($this->entityDefinitions === []) {
+            $this->refreshDiscovery();
+        }
+
+        return $this->entityDefinitions;
+    }
+
+    public function countEntities(EntityKey $key): int
+    {
+        $postType = $this->getDiscovery()->resolvePostType($key);
+        if ($postType !== null) {
+            return $this->scalarCount(
+                'SELECT COUNT(*) FROM ' . $this->table('posts')
+                . " WHERE post_type = :type AND post_status NOT IN ('auto-draft','inherit','trash')",
+                ['type' => $postType],
+            );
+        }
+
+        $taxonomy = $this->getDiscovery()->resolveTaxonomy($key);
+        if ($taxonomy !== null) {
+            return $this->scalarCount(
+                'SELECT COUNT(*) FROM ' . $this->table('term_taxonomy') . ' WHERE taxonomy = :tax',
+                ['tax' => $taxonomy],
+            );
+        }
+
+        return 0;
+    }
+
+    public function exportEntities(EntityKey $key, int $batchSize): \Generator
+    {
+        $postType = $this->getDiscovery()->resolvePostType($key);
+        if ($postType !== null) {
+            return $this->exportPosts($postType, $batchSize);
+        }
+
+        $taxonomy = $this->getDiscovery()->resolveTaxonomy($key);
+        if ($taxonomy !== null) {
+            return $this->exportTaxonomy($taxonomy, $batchSize);
+        }
+
+        return $this->emptyGenerator();
     }
 
     /** @return array<string, string> */
@@ -166,20 +210,23 @@ final class WordPressAdapter extends AbstractPdoAdapter
         ];
     }
 
-    public function importEntities(EntityType $type, array $entities, ImportContextInterface $context): ImportBatchResult
+    public function importEntities(EntityKey $key, array $entities, ImportContextInterface $context): ImportBatchResult
     {
         if ($context->isDryRun()) {
             return $this->dryRunResult($entities);
         }
 
-        return match ($type) {
-            EntityType::Post => $this->importPosts($entities, 'post', $context),
-            EntityType::Page => $this->importPosts($entities, 'page', $context),
-            EntityType::Product => $this->importPosts($entities, 'product', $context),
-            EntityType::Category => $this->importTaxonomy($entities, 'category', $context),
-            EntityType::Tag => $this->importTaxonomy($entities, 'post_tag', $context),
-            EntityType::Meta => new ImportBatchResult(),
-        };
+        $postType = $this->getDiscovery()->resolvePostType($key);
+        if ($postType !== null) {
+            return $this->importPosts($entities, $postType, $context);
+        }
+
+        $taxonomy = $this->getDiscovery()->resolveTaxonomy($key);
+        if ($taxonomy !== null) {
+            return $this->importTaxonomy($entities, $taxonomy, $context);
+        }
+
+        return new ImportBatchResult();
     }
 
     /** @return \Generator<int, array<string, mixed>> */
@@ -190,7 +237,7 @@ final class WordPressAdapter extends AbstractPdoAdapter
                        u.display_name AS author_name
                 FROM ' . $this->table('posts') . ' p
                 LEFT JOIN ' . $this->table('users') . ' u ON u.ID = p.post_author
-                WHERE p.post_type = :type AND p.post_status != \'auto-draft\'
+                WHERE p.post_type = :type AND p.post_status NOT IN (\'auto-draft\', \'inherit\', \'trash\')
                 ORDER BY p.ID';
 
         foreach ($this->batchedQuery($sql, $batchSize, ['type' => $postType]) as $row) {
@@ -234,6 +281,8 @@ final class WordPressAdapter extends AbstractPdoAdapter
                     authorName: $row['author_name'] ?? null,
                     publishedAt: $this->isoDate($row['post_date']),
                     updatedAt: $this->isoDate($row['post_modified']),
+                    parentId: (int) $row['post_parent'] ?: null,
+                    sortOrder: (int) $row['menu_order'],
                     taxonomyRefs: $this->loadTaxonomyRefs($id),
                     meta: $this->loadPostMeta($id),
                 ),
@@ -307,8 +356,9 @@ final class WordPressAdapter extends AbstractPdoAdapter
                     sourceId: (int) $row['term_id'],
                     slug: (string) $row['slug'],
                     name: (string) $row['name'],
-                    type: 'post_tag',
+                    type: $taxonomy === 'post_tag' ? 'post_tag' : $taxonomy,
                     description: (string) ($row['description'] ?? ''),
+                    parentId: (int) $row['parent'] ?: null,
                 );
 
             yield $entity->toArray();
@@ -336,8 +386,8 @@ final class WordPressAdapter extends AbstractPdoAdapter
 
             $parentId = null;
             if (!empty($entity['parent_id'])) {
-                $parentId = $remapper->resolve(EntityType::Page, $entity['parent_id'])
-                    ?? $remapper->resolve(EntityType::Post, $entity['parent_id']);
+                $parentId = $remapper->resolve(EntityKey::fromStandard(EntityType::Page), $entity['parent_id'])
+                    ?? $remapper->resolve(EntityKey::fromStandard(EntityType::Post), $entity['parent_id']);
             }
 
             $now = date('Y-m-d H:i:s');
@@ -399,9 +449,10 @@ final class WordPressAdapter extends AbstractPdoAdapter
     private function importTaxonomy(array $entities, string $taxonomy, ImportContextInterface $context): ImportBatchResult
     {
         $result = new ImportBatchResult();
-        $pdo = $this->getPdo();
         $remapper = $context->getIdRemapper();
-        $entityType = $taxonomy === 'category' ? EntityType::Category : EntityType::Tag;
+        $entityTypeKey = $taxonomy === 'category'
+            ? EntityKey::fromStandard(EntityType::Category)
+            : EntityKey::fromStandard(EntityType::Tag);
 
         foreach ($entities as $entity) {
             $slug = $this->resolveSlug(
@@ -417,7 +468,7 @@ final class WordPressAdapter extends AbstractPdoAdapter
 
             $parentId = 0;
             if (!empty($entity['parent_id'])) {
-                $resolved = $remapper->resolve(EntityType::Category, $entity['parent_id']);
+                $resolved = $remapper->resolve(EntityKey::fromStandard(EntityType::Category), $entity['parent_id']);
                 $parentId = $resolved !== null ? (int) $resolved : 0;
             }
 
@@ -470,8 +521,14 @@ final class WordPressAdapter extends AbstractPdoAdapter
         $remapper = $context->getIdRemapper();
         foreach ($refs as $ref) {
             $tax = (string) $ref['type'];
-            $type = $tax === 'category' ? EntityType::Category : EntityType::Tag;
-            $termId = $remapper->resolve($type, $ref['source_id']);
+            $typeKey = match ($tax) {
+                'category' => EntityKey::fromStandard(EntityType::Category),
+                'post_tag' => EntityKey::fromStandard(EntityType::Tag),
+                default => EntityKey::taxonomy($tax),
+            };
+            $termId = $remapper->resolve($typeKey, $ref['source_id'])
+                ?? $remapper->resolve(EntityKey::fromStandard(EntityType::Category), $ref['source_id'])
+                ?? $remapper->resolve(EntityKey::fromStandard(EntityType::Tag), $ref['source_id']);
             if ($termId === null) {
                 continue;
             }
@@ -508,6 +565,9 @@ final class WordPressAdapter extends AbstractPdoAdapter
         $pdo = $this->getPdo();
         foreach ($meta as $item) {
             $key = (string) $item['key'];
+            if (str_starts_with($key, '_source_')) {
+                continue;
+            }
             $value = (string) ($item['value'] ?? '');
             if ($strategy === 'overwrite') {
                 $pdo->prepare('DELETE FROM ' . $this->table('postmeta') . ' WHERE post_id = :id AND meta_key = :key')

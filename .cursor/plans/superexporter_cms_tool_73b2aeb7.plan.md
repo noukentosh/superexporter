@@ -7,10 +7,10 @@ todos:
     status: completed
   - id: universal-schema
     content: Определить Universal Entity classes + SchemaRegistry + Serializer
-    status: pending
+    status: completed
   - id: wp-adapter
     content: "WordPress adapter (reference): detect, export, import, round-trip"
-    status: pending
+    status: in_progress
   - id: bitrix-opencart
     content: Адаптеры Bitrix и OpenCart + кросс-импорт тест Bitrix→WP
     status: pending

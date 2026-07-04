@@ -11,7 +11,7 @@ use SuperExport\Exceptions\SuperExportException;
  * CLI command dispatcher:
  *   php superexport.php detect
  *   php superexport.php export --output=./storage
- *   php superexport.php import --input=./storage [--dry-run] [--duplicates=skip|suffix|overwrite]
+ *   php superexport.php import --input=./storage [--dry-run] [--resume] [--duplicates=skip|suffix|overwrite]
  */
 final class Commands
 {
@@ -85,10 +85,17 @@ final class Commands
         }
 
         $dryRun = (bool) ($options['dry-run'] ?? false);
+        $resume = (bool) ($options['resume'] ?? false);
         $duplicates = (string) ($options['duplicates'] ?? 'skip');
         $overrides = $this->loadMapping($options);
 
-        $report = $this->engine->import($input, $dryRun, $duplicates, $overrides);
+        if ($resume && $dryRun) {
+            $this->err('Cannot combine --resume with --dry-run.');
+
+            return 1;
+        }
+
+        $report = $this->engine->import($input, $dryRun, $duplicates, $overrides, $resume);
 
         $exitCode = 0;
         foreach ($report as $entity => $row) {
@@ -140,7 +147,7 @@ final class Commands
         $this->out('Usage:');
         $this->out('  php superexport.php detect');
         $this->out('  php superexport.php export [--output=./storage]');
-        $this->out('  php superexport.php import --input=./storage [--dry-run]');
+        $this->out('  php superexport.php import --input=./storage [--dry-run] [--resume]');
         $this->out('                             [--duplicates=skip|suffix|overwrite]');
         $this->out('                             [--mapping=import_map.json]');
 

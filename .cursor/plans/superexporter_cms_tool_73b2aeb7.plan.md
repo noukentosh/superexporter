@@ -10,16 +10,16 @@ todos:
     status: completed
   - id: wp-adapter
     content: "WordPress adapter (reference): detect, export, import, round-trip"
-    status: in_progress
+    status: completed
   - id: bitrix-opencart
     content: Адаптеры Bitrix и OpenCart + кросс-импорт тест Bitrix→WP
-    status: pending
+    status: completed
   - id: joomla-modx-drupal
     content: Адаптеры Joomla, MODX, Drupal
-    status: pending
+    status: completed
   - id: cli-interface
     content: "CLI: detect, export, import, dry-run, resume"
-    status: pending
+    status: completed
   - id: web-ui
     content: Web UI с secret key, mapping wizard, прогресс
     status: pending

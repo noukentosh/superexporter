@@ -12,6 +12,7 @@ ini_set('display_errors', PHP_SAPI === 'cli' ? '1' : '0');
 
 require __DIR__ . '/superexport/src/autoload.php';
 
+use SuperExport\Adapters\AdapterRegistrar;
 use SuperExport\Cli\Commands;
 use SuperExport\Core\Engine;
 use SuperExport\Exceptions\SuperExportException;
@@ -38,8 +39,7 @@ if (PHP_SAPI === 'cli') {
         fwrite(STDOUT, $message . PHP_EOL);
     });
 
-    // Adapters are registered here as they are implemented (phases 2-4):
-    // $engine->registerAdapter(new \SuperExport\Adapters\WordPress\WordPressAdapter(...));
+    AdapterRegistrar::registerAll($engine, $config);
 
     exit((new Commands($engine))->run($argv));
 }
@@ -47,6 +47,7 @@ if (PHP_SAPI === 'cli') {
 // --- Web entry point (full UI arrives in phase 5) ---
 
 $engine = new Engine($config);
+AdapterRegistrar::registerAll($engine, $config);
 
 try {
     $secret = $engine->getSecretKey();

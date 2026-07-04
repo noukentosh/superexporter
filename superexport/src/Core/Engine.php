@@ -87,6 +87,7 @@ final class Engine
         bool $dryRun = false,
         string $duplicateStrategy = 'skip',
         array $fieldOverrides = [],
+        bool $resume = false,
     ): array {
         $adapter = $this->detectCms();
         $context = new ImportContext(new IdRemapper(), $dryRun, $duplicateStrategy, $fieldOverrides);
@@ -99,7 +100,7 @@ final class Engine
             $this->progressCallback,
         );
 
-        $report = $pipeline->run($adapter, $inputPath, $context);
+        $report = $pipeline->run($adapter, $inputPath, $context, $resume);
 
         if (!$dryRun) {
             $this->saveImportMap($inputPath, $fieldOverrides, $context->getIdRemapper());

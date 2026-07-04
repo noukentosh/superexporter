@@ -60,4 +60,18 @@ final class IdRemapper
 
         return $remapper;
     }
+
+    /**
+     * @param array<string, array<string, string|int>> $map
+     */
+    public function rememberBatchFromMap(array $map): void
+    {
+        foreach ($map as $typeValue => $pairs) {
+            $type = EntityType::tryFrom($typeValue);
+            if ($type === null) {
+                continue;
+            }
+            $this->rememberBatch($type, $pairs);
+        }
+    }
 }

@@ -2,3 +2,4 @@ superexport/config.php
 superexport/storage/
 import_state.json
 import_map.json
+.cursor/
